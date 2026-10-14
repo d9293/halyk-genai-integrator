@@ -1,0 +1,9 @@
+/bin/
+*.test
+*.out
+coverage.*
+.idea/
+.vscode/
+.DS_Store
+# Local overrides that may contain secrets.
+*.local.env

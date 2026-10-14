@@ -1,0 +1,288 @@
+basePath: /
+definitions:
+  httpx.ErrorDetail:
+    properties:
+      code:
+        example: VALIDATION_ERROR
+        type: string
+      fields:
+        items:
+          $ref: '#/definitions/httpx.FieldError'
+        type: array
+      message:
+        example: Некорректный запрос
+        type: string
+      retryable:
+        description: Retryable means the same HTTP command may be repeated, not that
+          AI work may be restarted.
+        example: false
+        type: boolean
+    type: object
+  httpx.ErrorResponse:
+    properties:
+      error:
+        $ref: '#/definitions/httpx.ErrorDetail'
+      traceId:
+        description: TraceID is null until tracing is wired in.
+        type: string
+        x-nullable: true
+    type: object
+  httpx.FieldError:
+    properties:
+      code:
+        example: INVALID_FORMAT
+        type: string
+      path:
+        example: input.iin
+        type: string
+    type: object
+  task.CreateTaskRequest:
+    properties:
+      documents:
+        description: 'Empty array for operations without files. REGISTER_COMPARE:
+          exactly two, roles A and B, ordinal 1.'
+        items:
+          $ref: '#/definitions/task.DocumentInput'
+        type: array
+      input:
+        description: |-
+          Operation-specific JSON object.
+          SOCIAL_MEDIA: {"iin": "<12 digits>", "fullName": "<1..500 chars>"}.
+          REGISTER_COMPARE: {"adjudicate": true}.
+        type: object
+      operation:
+        enum:
+        - SOCIAL_MEDIA
+        - REGISTER_COMPARE
+        example: SOCIAL_MEDIA
+        type: string
+      operationVersion:
+        example: 1
+        type: integer
+      requestId:
+        example: 11111111-1111-4111-8111-111111111111
+        format: uuid
+        type: string
+    required:
+    - documents
+    - input
+    - operation
+    - operationVersion
+    - requestId
+    type: object
+  task.CreateTaskResponse:
+    properties:
+      createdAt:
+        example: "2026-10-13T08:00:00Z"
+        type: string
+      operation:
+        example: SOCIAL_MEDIA
+        type: string
+      requestId:
+        example: 11111111-1111-4111-8111-111111111111
+        format: uuid
+        type: string
+      status:
+        enum:
+        - WAITING_DOCUMENTS
+        - READY_TO_SUBMIT
+        example: READY_TO_SUBMIT
+        type: string
+    type: object
+  task.DocumentInput:
+    properties:
+      attstoreUrl:
+        example: https://attstore.example/documents/1
+        maxLength: 8192
+        type: string
+      documentId:
+        example: 22222222-2222-4222-8222-222222222222
+        format: uuid
+        type: string
+      ordinal:
+        example: 1
+        minimum: 1
+        type: integer
+      role:
+        example: A
+        type: string
+      sourceVersion:
+        description: Required for document operations.
+        example: "3"
+        type: string
+    required:
+    - attstoreUrl
+    - documentId
+    - ordinal
+    - role
+    type: object
+  task.Failure:
+    properties:
+      code:
+        example: AI_TASK_LOST_RETRIES_EXHAUSTED
+        type: string
+      message:
+        type: string
+    type: object
+  task.ReportLink:
+    properties:
+      expiresAt:
+        description: Null means the expiry is unknown, not that the link never expires.
+        type: string
+        x-nullable: true
+      type:
+        example: WORD
+        type: string
+      url:
+        example: https://s3.example/reports/1.docx
+        type: string
+    type: object
+  task.TaskView:
+    properties:
+      attention:
+        allOf:
+        - $ref: '#/definitions/task.Failure'
+        x-nullable: true
+      completedAt:
+        type: string
+        x-nullable: true
+      createdAt:
+        example: "2026-10-13T08:00:00Z"
+        type: string
+      error:
+        allOf:
+        - $ref: '#/definitions/task.Failure'
+        x-nullable: true
+      operation:
+        example: SOCIAL_MEDIA
+        type: string
+      operationVersion:
+        example: 1
+        type: integer
+      reports:
+        items:
+          $ref: '#/definitions/task.ReportLink'
+        type: array
+      requestId:
+        example: 11111111-1111-4111-8111-111111111111
+        format: uuid
+        type: string
+      result:
+        description: Operation-specific result JSON; null until the task succeeds.
+        type: object
+        x-nullable: true
+      stateVersion:
+        description: Increments on every state change; repeated polls of the same
+          AI state do not change it.
+        example: 1
+        type: integer
+      status:
+        enum:
+        - WAITING_DOCUMENTS
+        - PREPARING_DOCUMENTS
+        - READY_TO_SUBMIT
+        - SUBMITTING
+        - SUBMISSION_UNKNOWN
+        - REMOTE_QUEUED
+        - REMOTE_RUNNING
+        - NEEDS_ATTENTION
+        - SUCCEEDED
+        - FAILED
+        example: READY_TO_SUBMIT
+        type: string
+      updatedAt:
+        example: "2026-10-13T08:00:00Z"
+        type: string
+    type: object
+info:
+  contact: {}
+  description: 'Регистрация и чтение задач BPM. Этап 1: хранилище в памяти, состояние
+    теряется при перезапуске.'
+  title: Integrator.Api
+  version: "1.0"
+paths:
+  /api/v1/tasks:
+    post:
+      consumes:
+      - application/json
+      description: Сохраняет задачу BPM и возвращает 202 после commit. Повтор с тем
+        же requestId и тем же входом возвращает 200 и текущее состояние; другой вход
+        — 409 IDEMPOTENCY_CONFLICT.
+      parameters:
+      - description: Task
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/task.CreateTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Same task already registered
+          schema:
+            $ref: '#/definitions/task.CreateTaskResponse'
+        "202":
+          description: Task registered
+          headers:
+            Location:
+              description: /api/v1/tasks/{requestId}
+              type: string
+          schema:
+            $ref: '#/definitions/task.CreateTaskResponse'
+        "400":
+          description: MALFORMED_JSON, VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "409":
+          description: IDEMPOTENCY_CONFLICT, REQUEST_ID_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "413":
+          description: BODY_TOO_LARGE
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "422":
+          description: OPERATION_NOT_ENABLED, VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Register task
+      tags:
+      - tasks
+  /api/v1/tasks/{requestId}:
+    get:
+      description: Текущее состояние задачи, результат и ссылки на отчёты.
+      parameters:
+      - description: Request ID
+        format: uuid
+        in: path
+        name: requestId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.TaskView'
+        "400":
+          description: VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: TASK_NOT_FOUND
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Get task
+      tags:
+      - tasks
+swagger: "2.0"

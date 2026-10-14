@@ -1,0 +1,397 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Регистрация и чтение задач BPM. Этап 1: хранилище в памяти, состояние теряется при перезапуске.",
+        "title": "Integrator.Api",
+        "contact": {},
+        "version": "1.0"
+    },
+    "basePath": "/",
+    "paths": {
+        "/api/v1/tasks": {
+            "post": {
+                "description": "Сохраняет задачу BPM и возвращает 202 после commit. Повтор с тем же requestId и тем же входом возвращает 200 и текущее состояние; другой вход — 409 IDEMPOTENCY_CONFLICT.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Register task",
+                "parameters": [
+                    {
+                        "description": "Task",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/task.CreateTaskRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Same task already registered",
+                        "schema": {
+                            "$ref": "#/definitions/task.CreateTaskResponse"
+                        }
+                    },
+                    "202": {
+                        "description": "Task registered",
+                        "schema": {
+                            "$ref": "#/definitions/task.CreateTaskResponse"
+                        },
+                        "headers": {
+                            "Location": {
+                                "type": "string",
+                                "description": "/api/v1/tasks/{requestId}"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "IDEMPOTENCY_CONFLICT, REQUEST_ID_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "BODY_TOO_LARGE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "OPERATION_NOT_ENABLED, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tasks/{requestId}": {
+            "get": {
+                "description": "Текущее состояние задачи, результат и ссылки на отчёты.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Get task",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Request ID",
+                        "name": "requestId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/task.TaskView"
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "TASK_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "httpx.ErrorDetail": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "VALIDATION_ERROR"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/httpx.FieldError"
+                    }
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Некорректный запрос"
+                },
+                "retryable": {
+                    "description": "Retryable means the same HTTP command may be repeated, not that AI work may be restarted.",
+                    "type": "boolean",
+                    "example": false
+                }
+            }
+        },
+        "httpx.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "$ref": "#/definitions/httpx.ErrorDetail"
+                },
+                "traceId": {
+                    "description": "TraceID is null until tracing is wired in.",
+                    "type": "string",
+                    "x-nullable": true
+                }
+            }
+        },
+        "httpx.FieldError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "INVALID_FORMAT"
+                },
+                "path": {
+                    "type": "string",
+                    "example": "input.iin"
+                }
+            }
+        },
+        "task.CreateTaskRequest": {
+            "type": "object",
+            "required": [
+                "documents",
+                "input",
+                "operation",
+                "operationVersion",
+                "requestId"
+            ],
+            "properties": {
+                "documents": {
+                    "description": "Empty array for operations without files. REGISTER_COMPARE: exactly two, roles A and B, ordinal 1.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/task.DocumentInput"
+                    }
+                },
+                "input": {
+                    "description": "Operation-specific JSON object.\nSOCIAL_MEDIA: {\"iin\": \"\u003c12 digits\u003e\", \"fullName\": \"\u003c1..500 chars\u003e\"}.\nREGISTER_COMPARE: {\"adjudicate\": true}.",
+                    "type": "object"
+                },
+                "operation": {
+                    "type": "string",
+                    "enum": [
+                        "SOCIAL_MEDIA",
+                        "REGISTER_COMPARE"
+                    ],
+                    "example": "SOCIAL_MEDIA"
+                },
+                "operationVersion": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "11111111-1111-4111-8111-111111111111"
+                }
+            }
+        },
+        "task.CreateTaskResponse": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string",
+                    "example": "2026-10-13T08:00:00Z"
+                },
+                "operation": {
+                    "type": "string",
+                    "example": "SOCIAL_MEDIA"
+                },
+                "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "11111111-1111-4111-8111-111111111111"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "WAITING_DOCUMENTS",
+                        "READY_TO_SUBMIT"
+                    ],
+                    "example": "READY_TO_SUBMIT"
+                }
+            }
+        },
+        "task.DocumentInput": {
+            "type": "object",
+            "required": [
+                "attstoreUrl",
+                "documentId",
+                "ordinal",
+                "role"
+            ],
+            "properties": {
+                "attstoreUrl": {
+                    "type": "string",
+                    "maxLength": 8192,
+                    "example": "https://attstore.example/documents/1"
+                },
+                "documentId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "22222222-2222-4222-8222-222222222222"
+                },
+                "ordinal": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "example": 1
+                },
+                "role": {
+                    "type": "string",
+                    "example": "A"
+                },
+                "sourceVersion": {
+                    "description": "Required for document operations.",
+                    "type": "string",
+                    "example": "3"
+                }
+            }
+        },
+        "task.Failure": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "AI_TASK_LOST_RETRIES_EXHAUSTED"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "task.ReportLink": {
+            "type": "object",
+            "properties": {
+                "expiresAt": {
+                    "description": "Null means the expiry is unknown, not that the link never expires.",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "type": {
+                    "type": "string",
+                    "example": "WORD"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://s3.example/reports/1.docx"
+                }
+            }
+        },
+        "task.TaskView": {
+            "type": "object",
+            "properties": {
+                "attention": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/task.Failure"
+                        }
+                    ],
+                    "x-nullable": true
+                },
+                "completedAt": {
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "createdAt": {
+                    "type": "string",
+                    "example": "2026-10-13T08:00:00Z"
+                },
+                "error": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/task.Failure"
+                        }
+                    ],
+                    "x-nullable": true
+                },
+                "operation": {
+                    "type": "string",
+                    "example": "SOCIAL_MEDIA"
+                },
+                "operationVersion": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "reports": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/task.ReportLink"
+                    }
+                },
+                "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "11111111-1111-4111-8111-111111111111"
+                },
+                "result": {
+                    "description": "Operation-specific result JSON; null until the task succeeds.",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "stateVersion": {
+                    "description": "Increments on every state change; repeated polls of the same AI state do not change it.",
+                    "type": "integer",
+                    "example": 1
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "WAITING_DOCUMENTS",
+                        "PREPARING_DOCUMENTS",
+                        "READY_TO_SUBMIT",
+                        "SUBMITTING",
+                        "SUBMISSION_UNKNOWN",
+                        "REMOTE_QUEUED",
+                        "REMOTE_RUNNING",
+                        "NEEDS_ATTENTION",
+                        "SUCCEEDED",
+                        "FAILED"
+                    ],
+                    "example": "READY_TO_SUBMIT"
+                },
+                "updatedAt": {
+                    "type": "string",
+                    "example": "2026-10-13T08:00:00Z"
+                }
+            }
+        }
+    }
+}
