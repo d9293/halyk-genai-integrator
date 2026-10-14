@@ -39,8 +39,9 @@ definitions:
   task.CreateTaskRequest:
     properties:
       documents:
-        description: 'Empty array for operations without files. REGISTER_COMPARE:
-          exactly two, roles A and B, ordinal 1.'
+        description: |-
+          Empty array for operations without files. REGISTER_COMPARE: exactly two.
+          Order matters: AI results refer to files by position (only_a = first, only_b = second).
         items:
           $ref: '#/definitions/task.DocumentInput'
         type: array
@@ -56,10 +57,14 @@ definitions:
         - REGISTER_COMPARE
         example: SOCIAL_MEDIA
         type: string
-      operationVersion:
-        example: 1
-        type: integer
+      requestGuid:
+        description: Unique ID of this task. Reuse it when retrying the same task.
+        example: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+        format: uuid
+        type: string
       requestId:
+        description: Camunda request the task belongs to; several tasks can share
+          it.
         example: 11111111-1111-4111-8111-111111111111
         format: uuid
         type: string
@@ -67,7 +72,7 @@ definitions:
     - documents
     - input
     - operation
-    - operationVersion
+    - requestGuid
     - requestId
     type: object
   task.CreateTaskResponse:
@@ -77,6 +82,10 @@ definitions:
         type: string
       operation:
         example: SOCIAL_MEDIA
+        type: string
+      requestGuid:
+        example: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+        format: uuid
         type: string
       requestId:
         example: 11111111-1111-4111-8111-111111111111
@@ -96,25 +105,13 @@ definitions:
         maxLength: 8192
         type: string
       documentId:
+        description: Unique within one task.
         example: 22222222-2222-4222-8222-222222222222
         format: uuid
-        type: string
-      ordinal:
-        example: 1
-        minimum: 1
-        type: integer
-      role:
-        example: A
-        type: string
-      sourceVersion:
-        description: Required for document operations.
-        example: "3"
         type: string
     required:
     - attstoreUrl
     - documentId
-    - ordinal
-    - role
     type: object
   task.Failure:
     properties:
@@ -124,25 +121,8 @@ definitions:
       message:
         type: string
     type: object
-  task.ReportLink:
-    properties:
-      expiresAt:
-        description: Null means the expiry is unknown, not that the link never expires.
-        type: string
-        x-nullable: true
-      type:
-        example: WORD
-        type: string
-      url:
-        example: https://s3.example/reports/1.docx
-        type: string
-    type: object
   task.TaskView:
     properties:
-      attention:
-        allOf:
-        - $ref: '#/definitions/task.Failure'
-        x-nullable: true
       completedAt:
         type: string
         x-nullable: true
@@ -152,30 +132,23 @@ definitions:
       error:
         allOf:
         - $ref: '#/definitions/task.Failure'
+        description: Set when the task is FAILED or NEEDS_ATTENTION.
         x-nullable: true
       operation:
         example: SOCIAL_MEDIA
         type: string
-      operationVersion:
-        example: 1
-        type: integer
-      reports:
-        items:
-          $ref: '#/definitions/task.ReportLink'
-        type: array
+      requestGuid:
+        example: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+        format: uuid
+        type: string
       requestId:
         example: 11111111-1111-4111-8111-111111111111
         format: uuid
         type: string
       result:
-        description: Operation-specific result JSON; null until the task succeeds.
+        description: AI result JSON as AI returned it; null until the task succeeds.
         type: object
         x-nullable: true
-      stateVersion:
-        description: Increments on every state change; repeated polls of the same
-          AI state do not change it.
-        example: 1
-        type: integer
       status:
         enum:
         - WAITING_DOCUMENTS
@@ -196,8 +169,7 @@ definitions:
     type: object
 info:
   contact: {}
-  description: 'Регистрация и чтение задач BPM. Этап 1: хранилище в памяти, состояние
-    теряется при перезапуске.'
+  description: Регистрация и чтение задач BPM.
   title: Integrator.Api
   version: "1.0"
 paths:
@@ -206,8 +178,8 @@ paths:
       consumes:
       - application/json
       description: Сохраняет задачу BPM и возвращает 202 после commit. Повтор с тем
-        же requestId и тем же входом возвращает 200 и текущее состояние; другой вход
-        — 409 IDEMPOTENCY_CONFLICT.
+        же requestGuid и теми же данными возвращает 200 и текущее состояние; другой
+        вход — 409 IDEMPOTENCY_CONFLICT.
       parameters:
       - description: Task
         in: body
@@ -226,7 +198,7 @@ paths:
           description: Task registered
           headers:
             Location:
-              description: /api/v1/tasks/{requestId}
+              description: /api/v1/tasks/{requestGuid}
               type: string
           schema:
             $ref: '#/definitions/task.CreateTaskResponse'
@@ -235,7 +207,7 @@ paths:
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "409":
-          description: IDEMPOTENCY_CONFLICT, REQUEST_ID_UNAVAILABLE
+          description: IDEMPOTENCY_CONFLICT, REQUEST_GUID_UNAVAILABLE
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "413":
@@ -250,17 +222,22 @@ paths:
           description: INTERNAL_ERROR
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
+        "503":
+          description: 'SERVICE_UNAVAILABLE: database unreachable, retry with the
+            same body'
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
       summary: Register task
       tags:
       - tasks
-  /api/v1/tasks/{requestId}:
+  /api/v1/tasks/{requestGuid}:
     get:
       description: Текущее состояние задачи, результат и ссылки на отчёты.
       parameters:
-      - description: Request ID
+      - description: Request GUID
         format: uuid
         in: path
-        name: requestId
+        name: requestGuid
         required: true
         type: string
       produces:
@@ -280,6 +257,10 @@ paths:
             $ref: '#/definitions/httpx.ErrorResponse'
         "500":
           description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "503":
+          description: SERVICE_UNAVAILABLE
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Get task

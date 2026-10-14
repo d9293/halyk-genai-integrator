@@ -13,7 +13,8 @@ import (
 	"github.com/d9293/halyk-genai-integrator/internal/config"
 	httphandler "github.com/d9293/halyk-genai-integrator/internal/handler/http"
 	taskhandler "github.com/d9293/halyk-genai-integrator/internal/handler/http/task"
-	taskrepo "github.com/d9293/halyk-genai-integrator/internal/repository/memory/task"
+	"github.com/d9293/halyk-genai-integrator/internal/repository/postgres"
+	taskrepo "github.com/d9293/halyk-genai-integrator/internal/repository/postgres/task"
 	taskusecase "github.com/d9293/halyk-genai-integrator/internal/usecase/task"
 )
 
@@ -21,7 +22,13 @@ import (
 func Run(ctx context.Context, cfg config.Config) error {
 	gin.SetMode(gin.ReleaseMode)
 
-	tasks, err := taskusecase.NewUseCase(taskrepo.NewRepo(), taskusecase.Config{
+	pool, err := postgres.NewPool(ctx, cfg.Postgres)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	tasks, err := taskusecase.NewUseCase(taskrepo.NewRepo(pool, cfg.Postgres.QueryTimeout), taskusecase.Config{
 		EnabledOperations: cfg.EnabledOperations,
 		AttstoreHosts:     cfg.AttstoreHosts,
 	})
@@ -29,7 +36,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("create task usecase: %w", err)
 	}
 
-	router := httphandler.NewRouter(cfg.CallerID, cfg.SwaggerEnabled, taskhandler.NewHandler(tasks))
+	router := httphandler.NewRouter(cfg.CallerID, cfg.SwaggerEnabled, pool.Ping, taskhandler.NewHandler(tasks))
 	server := &http.Server{
 		Addr:              ":" + cfg.HTTPPort,
 		Handler:           router.Engine(),
@@ -40,7 +47,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	go func() {
 		slog.Info("http server started",
 			"port", cfg.HTTPPort,
-			"storage", "in-memory (state is lost on restart)",
+			"postgres", cfg.Postgres.Host+":"+cfg.Postgres.Port+"/"+cfg.Postgres.Database,
 			"swagger", cfg.SwaggerEnabled,
 			"operations", cfg.EnabledOperations,
 		)

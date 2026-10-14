@@ -23,7 +23,7 @@ var _ taskRepo = &taskRepoMock{}
 //			CreateIfAbsentFunc: func(ctx context.Context, t domain.Task) (domain.Task, bool, error) {
 //				panic("mock out the CreateIfAbsent method")
 //			},
-//			GetFunc: func(ctx context.Context, callerID string, requestID uuid.UUID) (domain.Task, error) {
+//			GetFunc: func(ctx context.Context, callerID string, requestGUID uuid.UUID) (domain.Task, error) {
 //				panic("mock out the Get method")
 //			},
 //		}
@@ -37,7 +37,7 @@ type taskRepoMock struct {
 	CreateIfAbsentFunc func(ctx context.Context, t domain.Task) (domain.Task, bool, error)
 
 	// GetFunc mocks the Get method.
-	GetFunc func(ctx context.Context, callerID string, requestID uuid.UUID) (domain.Task, error)
+	GetFunc func(ctx context.Context, callerID string, requestGUID uuid.UUID) (domain.Task, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -54,8 +54,8 @@ type taskRepoMock struct {
 			Ctx context.Context
 			// CallerID is the callerID argument value.
 			CallerID string
-			// RequestID is the requestID argument value.
-			RequestID uuid.UUID
+			// RequestGUID is the requestGUID argument value.
+			RequestGUID uuid.UUID
 		}
 	}
 	lockCreateIfAbsent sync.RWMutex
@@ -99,23 +99,23 @@ func (mock *taskRepoMock) CreateIfAbsentCalls() []struct {
 }
 
 // Get calls GetFunc.
-func (mock *taskRepoMock) Get(ctx context.Context, callerID string, requestID uuid.UUID) (domain.Task, error) {
+func (mock *taskRepoMock) Get(ctx context.Context, callerID string, requestGUID uuid.UUID) (domain.Task, error) {
 	if mock.GetFunc == nil {
 		panic("taskRepoMock.GetFunc: method is nil but taskRepo.Get was just called")
 	}
 	callInfo := struct {
-		Ctx       context.Context
-		CallerID  string
-		RequestID uuid.UUID
+		Ctx         context.Context
+		CallerID    string
+		RequestGUID uuid.UUID
 	}{
-		Ctx:       ctx,
-		CallerID:  callerID,
-		RequestID: requestID,
+		Ctx:         ctx,
+		CallerID:    callerID,
+		RequestGUID: requestGUID,
 	}
 	mock.lockGet.Lock()
 	mock.calls.Get = append(mock.calls.Get, callInfo)
 	mock.lockGet.Unlock()
-	return mock.GetFunc(ctx, callerID, requestID)
+	return mock.GetFunc(ctx, callerID, requestGUID)
 }
 
 // GetCalls gets all the calls that were made to Get.
@@ -123,14 +123,14 @@ func (mock *taskRepoMock) Get(ctx context.Context, callerID string, requestID uu
 //
 //	len(mockedtaskRepo.GetCalls())
 func (mock *taskRepoMock) GetCalls() []struct {
-	Ctx       context.Context
-	CallerID  string
-	RequestID uuid.UUID
+	Ctx         context.Context
+	CallerID    string
+	RequestGUID uuid.UUID
 } {
 	var calls []struct {
-		Ctx       context.Context
-		CallerID  string
-		RequestID uuid.UUID
+		Ctx         context.Context
+		CallerID    string
+		RequestGUID uuid.UUID
 	}
 	mock.lockGet.RLock()
 	calls = mock.calls.Get

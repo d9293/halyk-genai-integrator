@@ -2,7 +2,7 @@
 //
 //	@title			Integrator.Api
 //	@version		1.0
-//	@description	Регистрация и чтение задач BPM. Этап 1: хранилище в памяти, состояние теряется при перезапуске.
+//	@description	Регистрация и чтение задач BPM.
 //	@BasePath		/
 package main
 

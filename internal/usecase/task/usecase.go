@@ -1,16 +1,13 @@
 package task
 
 import (
-	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"slices"
 	"strconv"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -20,12 +17,13 @@ import (
 //go:generate moq -out task_repo_mock_test.go . taskRepo
 
 type taskRepo interface {
-	// CreateIfAbsent stores t unless its requestId already exists. It returns the
+	// CreateIfAbsent stores t unless its requestGuid already exists. It returns the
 	// stored task and whether this call inserted it. Must be atomic: of two
-	// concurrent calls with the same requestId exactly one inserts.
+	// concurrent calls with the same requestGuid exactly one inserts. The store
+	// sets CreatedAt and UpdatedAt.
 	CreateIfAbsent(ctx context.Context, t domain.Task) (domain.Task, bool, error)
 	// Get returns ErrTaskNotFound when the task is missing or owned by another caller.
-	Get(ctx context.Context, callerID string, requestID uuid.UUID) (domain.Task, error)
+	Get(ctx context.Context, callerID string, requestGUID uuid.UUID) (domain.Task, error)
 }
 
 type Config struct {
@@ -39,13 +37,12 @@ type UseCase struct {
 	repo          taskRepo
 	enabled       map[domain.Operation]bool
 	attstoreHosts map[string]bool
-	now           func() time.Time
 }
 
 func NewUseCase(repo taskRepo, cfg Config) (*UseCase, error) {
 	known := make(map[domain.Operation]bool)
-	for key := range knownOperations {
-		known[key.operation] = true
+	for op := range knownOperations {
+		known[op] = true
 	}
 
 	enabled := make(map[domain.Operation]bool)
@@ -65,7 +62,6 @@ func NewUseCase(repo taskRepo, cfg Config) (*UseCase, error) {
 		repo:          repo,
 		enabled:       enabled,
 		attstoreHosts: hosts,
-		now:           time.Now,
 	}, nil
 }
 
@@ -75,12 +71,7 @@ func (uc *UseCase) Register(ctx context.Context, in RegisterInput) (domain.Task,
 	if !uc.enabled[in.Operation] {
 		return domain.Task{}, false, ErrOperationNotEnabled
 	}
-	spec, ok := knownOperations[operationKey{in.Operation, in.OperationVersion}]
-	if !ok {
-		return domain.Task{}, false, &ValidationError{Fields: []FieldError{
-			{Path: "operationVersion", Code: CodeUnsupportedVersion},
-		}}
-	}
+	spec := knownOperations[in.Operation]
 
 	input, fields := spec.NormalizeInput(in.Input)
 	fields = append(fields, uc.validateDocuments(in.Documents)...)
@@ -89,30 +80,20 @@ func (uc *UseCase) Register(ctx context.Context, in RegisterInput) (domain.Task,
 		return domain.Task{}, false, &ValidationError{Fields: fields}
 	}
 
-	// Order is not part of the request's identity; role/ordinal is.
-	docs := slices.Clone(in.Documents)
-	slices.SortFunc(docs, func(a, b domain.Document) int {
-		return cmp.Or(cmp.Compare(a.Role, b.Role), cmp.Compare(a.Ordinal, b.Ordinal))
-	})
-
 	status := domain.StatusReadyToSubmit
 	if spec.RequiresDocuments() {
 		status = domain.StatusWaitingDocuments
 	}
 
-	now := uc.now().UTC()
 	t := domain.Task{
-		RequestID:        in.RequestID,
-		CallerID:         in.CallerID,
-		Operation:        in.Operation,
-		OperationVersion: in.OperationVersion,
-		Input:            input,
-		Documents:        docs,
-		RequestHash:      requestHash(in.Operation, in.OperationVersion, input, docs),
-		Status:           status,
-		StateVersion:     1,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		RequestGUID: in.RequestGUID,
+		RequestID:   in.RequestID,
+		CallerID:    in.CallerID,
+		Operation:   in.Operation,
+		Input:       input,
+		Documents:   in.Documents,
+		RequestHash: requestHash(in.RequestID, in.Operation, input, in.Documents),
+		Status:      status,
 	}
 
 	stored, created, err := uc.repo.CreateIfAbsent(ctx, t)
@@ -126,15 +107,15 @@ func (uc *UseCase) Register(ctx context.Context, in RegisterInput) (domain.Task,
 	// Compare against the original registration, never the current operational state.
 	switch {
 	case stored.CallerID != t.CallerID:
-		return domain.Task{}, false, ErrRequestIDUnavailable
+		return domain.Task{}, false, ErrRequestGUIDUnavailable
 	case stored.RequestHash != t.RequestHash:
 		return domain.Task{}, false, ErrIdempotencyConflict
 	}
 	return stored, false, nil
 }
 
-func (uc *UseCase) Get(ctx context.Context, callerID string, requestID uuid.UUID) (domain.Task, error) {
-	t, err := uc.repo.Get(ctx, callerID, requestID)
+func (uc *UseCase) Get(ctx context.Context, callerID string, requestGUID uuid.UUID) (domain.Task, error) {
+	t, err := uc.repo.Get(ctx, callerID, requestGUID)
 	if err != nil {
 		return domain.Task{}, fmt.Errorf("get task: %w", err)
 	}
@@ -145,11 +126,6 @@ func (uc *UseCase) Get(ctx context.Context, callerID string, requestID uuid.UUID
 func (uc *UseCase) validateDocuments(docs []domain.Document) []FieldError {
 	var fields []FieldError
 	seenIDs := make(map[uuid.UUID]bool)
-	type slot struct {
-		role    string
-		ordinal int
-	}
-	seenSlots := make(map[slot]bool)
 
 	for i, d := range docs {
 		path := documentPath(i)
@@ -157,12 +133,6 @@ func (uc *UseCase) validateDocuments(docs []domain.Document) []FieldError {
 			fields = append(fields, FieldError{Path: path + ".documentId", Code: CodeDuplicate})
 		}
 		seenIDs[d.DocumentID] = true
-
-		s := slot{d.Role, d.Ordinal}
-		if seenSlots[s] {
-			fields = append(fields, FieldError{Path: path + ".role", Code: CodeDuplicate})
-		}
-		seenSlots[s] = true
 
 		u, err := url.Parse(d.AttstoreURL)
 		switch {
@@ -179,14 +149,12 @@ func documentPath(i int) string {
 	return "documents[" + strconv.Itoa(i) + "]"
 }
 
-// requestHash fingerprints the normalized registration. Documents must already be sorted.
-func requestHash(op domain.Operation, version int, input json.RawMessage, docs []domain.Document) string {
+// requestHash fingerprints the normalized registration. Document order is
+// part of it: swapped files give a swapped AI result.
+func requestHash(requestID uuid.UUID, op domain.Operation, input json.RawMessage, docs []domain.Document) string {
 	type hashedDocument struct {
-		DocumentID    uuid.UUID `json:"documentId"`
-		Role          string    `json:"role"`
-		Ordinal       int       `json:"ordinal"`
-		AttstoreURL   string    `json:"attstoreUrl"`
-		SourceVersion string    `json:"sourceVersion"`
+		DocumentID  uuid.UUID `json:"documentId"`
+		AttstoreURL string    `json:"attstoreUrl"`
 	}
 	hashed := make([]hashedDocument, 0, len(docs))
 	for _, d := range docs {
@@ -194,11 +162,11 @@ func requestHash(op domain.Operation, version int, input json.RawMessage, docs [
 	}
 
 	payload := mustMarshal(struct {
-		Operation        domain.Operation `json:"operation"`
-		OperationVersion int              `json:"operationVersion"`
-		Input            json.RawMessage  `json:"input"`
-		Documents        []hashedDocument `json:"documents"`
-	}{op, version, input, hashed})
+		RequestID uuid.UUID        `json:"requestId"`
+		Operation domain.Operation `json:"operation"`
+		Input     json.RawMessage  `json:"input"`
+		Documents []hashedDocument `json:"documents"`
+	}{requestID, op, input, hashed})
 
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])

@@ -21,6 +21,19 @@ type Config struct {
 	CallerID          string             `env:"CALLER_ID,required"`
 	EnabledOperations []domain.Operation `env:"ENABLED_OPERATIONS,required"`
 	AttstoreHosts     []string           `env:"ATTSTORE_ALLOWED_HOSTS,required"`
+	Postgres          PostgresConfig
+}
+
+type PostgresConfig struct {
+	Host     string `env:"POSTGRES_HOST,required"`
+	Port     string `env:"POSTGRES_PORT,required"`
+	Database string `env:"POSTGRES_DB,required"`
+	User     string `env:"POSTGRES_USER,required"`
+	Password string `env:"POSTGRES_PASSWORD,required"`
+	SSLMode  string `env:"POSTGRES_SSL_MODE,required"`
+	MaxConns int32  `env:"POSTGRES_MAX_CONNS,required"`
+	// QueryTimeout bounds every database call, so a stuck database turns into a 503.
+	QueryTimeout time.Duration `env:"POSTGRES_QUERY_TIMEOUT,required"`
 }
 
 // Load reads the env file into the process environment, then parses the

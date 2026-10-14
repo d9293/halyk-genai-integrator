@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	testCaller    = "bpm-test"
-	testRequestID = "11111111-1111-4111-8111-111111111111"
-	socialMedia   = `{"requestId":"11111111-1111-4111-8111-111111111111","operation":"SOCIAL_MEDIA","operationVersion":1,"input":{"iin":"000000000000","fullName":"Тестовый клиент"},"documents":[]}`
+	testCaller      = "bpm-test"
+	testRequestID   = "11111111-1111-4111-8111-111111111111"
+	testRequestGUID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	socialMedia     = `{"requestId":"11111111-1111-4111-8111-111111111111","requestGuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","operation":"SOCIAL_MEDIA","input":{"iin":"000000000000","fullName":"Тестовый клиент"},"documents":[]}`
 )
 
 var createdAt = time.Date(2026, 10, 13, 8, 0, 0, 0, time.UTC)
@@ -57,10 +58,11 @@ func registerReturning(created bool, err error) *taskServiceMock {
 				return domain.Task{}, false, err
 			}
 			return domain.Task{
-				RequestID: in.RequestID,
-				Operation: in.Operation,
-				Status:    domain.StatusReadyToSubmit,
-				CreatedAt: createdAt,
+				RequestID:   in.RequestID,
+				RequestGUID: in.RequestGUID,
+				Operation:   in.Operation,
+				Status:      domain.StatusReadyToSubmit,
+				CreatedAt:   createdAt,
 			}, created, nil
 		},
 	}
@@ -73,16 +75,16 @@ func TestCreate_NewTask(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body)
 	}
-	if got := w.Header().Get("Location"); got != "/api/v1/tasks/"+testRequestID {
+	if got := w.Header().Get("Location"); got != "/api/v1/tasks/"+testRequestGUID {
 		t.Errorf("Location = %q", got)
 	}
-	want := `{"requestId":"11111111-1111-4111-8111-111111111111","operation":"SOCIAL_MEDIA","status":"READY_TO_SUBMIT","createdAt":"2026-10-13T08:00:00Z"}`
+	want := `{"requestId":"11111111-1111-4111-8111-111111111111","requestGuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","operation":"SOCIAL_MEDIA","status":"READY_TO_SUBMIT","createdAt":"2026-10-13T08:00:00Z"}`
 	if w.Body.String() != want {
 		t.Errorf("body = %s", w.Body)
 	}
 
 	in := svc.RegisterCalls()[0].In
-	if in.CallerID != testCaller || in.RequestID.String() != testRequestID || in.OperationVersion != 1 {
+	if in.CallerID != testCaller || in.RequestID.String() != testRequestID || in.RequestGUID.String() != testRequestGUID {
 		t.Errorf("unexpected input %+v", in)
 	}
 	if string(in.Input) != `{"iin":"000000000000","fullName":"Тестовый клиент"}` {
@@ -105,20 +107,17 @@ func TestCreate_Replay(t *testing.T) {
 
 func TestCreate_Documents(t *testing.T) {
 	svc := registerReturning(true, nil)
-	body := `{"requestId":"11111111-1111-4111-8111-111111111111","operation":"REGISTER_COMPARE","operationVersion":1,"input":{"adjudicate":true},"documents":[
-		{"documentId":"22222222-2222-4222-8222-222222222222","role":"A","ordinal":1,"attstoreUrl":"https://attstore.example/documents/1","sourceVersion":"3"},
-		{"documentId":"33333333-3333-4333-8333-333333333333","role":"B","ordinal":1,"attstoreUrl":"https://attstore.example/documents/2","sourceVersion":"1"}]}`
+	body := `{"requestId":"11111111-1111-4111-8111-111111111111","requestGuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","operation":"REGISTER_COMPARE","input":{"adjudicate":true},"documents":[
+		{"documentId":"22222222-2222-4222-8222-222222222222","attstoreUrl":"https://attstore.example/documents/1"},
+		{"documentId":"33333333-3333-4333-8333-333333333333","attstoreUrl":"https://attstore.example/documents/2"}]}`
 	w := do(newEngine(svc), http.MethodPost, "/api/v1/tasks", body)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body)
 	}
 	docs := svc.RegisterCalls()[0].In.Documents
 	want := domain.Document{
-		DocumentID:    uuid.MustParse("33333333-3333-4333-8333-333333333333"),
-		Role:          "B",
-		Ordinal:       1,
-		AttstoreURL:   "https://attstore.example/documents/2",
-		SourceVersion: "1",
+		DocumentID:  uuid.MustParse("33333333-3333-4333-8333-333333333333"),
+		AttstoreURL: "https://attstore.example/documents/2",
 	}
 	if len(docs) != 2 || docs[1] != want {
 		t.Errorf("documents = %+v", docs)
@@ -167,9 +166,9 @@ func TestCreate_BadRequest(t *testing.T) {
 		},
 		{
 			name:       "wrong type",
-			body:       `{"operationVersion":"1"}`,
+			body:       `{"operation":1}`,
 			wantCode:   httpx.CodeValidationError,
-			wantFields: []httpx.FieldError{{Path: "operationVersion", Code: httpx.FieldInvalidType}},
+			wantFields: []httpx.FieldError{{Path: "operation", Code: httpx.FieldInvalidType}},
 		},
 		{
 			name:     "all fields missing",
@@ -177,15 +176,15 @@ func TestCreate_BadRequest(t *testing.T) {
 			wantCode: httpx.CodeValidationError,
 			wantFields: []httpx.FieldError{
 				{Path: "requestId", Code: httpx.FieldRequired},
+				{Path: "requestGuid", Code: httpx.FieldRequired},
 				{Path: "operation", Code: httpx.FieldRequired},
-				{Path: "operationVersion", Code: httpx.FieldRequired},
 				{Path: "input", Code: httpx.FieldRequired},
 				{Path: "documents", Code: httpx.FieldRequired},
 			},
 		},
 		{
 			name:     "non-canonical uuid and input not an object",
-			body:     `{"requestId":"{11111111-1111-4111-8111-111111111111}","operation":"SOCIAL_MEDIA","operationVersion":1,"input":"{}","documents":[]}`,
+			body:     `{"requestId":"{11111111-1111-4111-8111-111111111111}","requestGuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","operation":"SOCIAL_MEDIA","input":"{}","documents":[]}`,
 			wantCode: httpx.CodeValidationError,
 			wantFields: []httpx.FieldError{
 				{Path: "requestId", Code: httpx.FieldInvalidFormat},
@@ -194,18 +193,16 @@ func TestCreate_BadRequest(t *testing.T) {
 		},
 		{
 			name:       "null input",
-			body:       `{"requestId":"11111111-1111-4111-8111-111111111111","operation":"SOCIAL_MEDIA","operationVersion":1,"input":null,"documents":[]}`,
+			body:       `{"requestId":"11111111-1111-4111-8111-111111111111","requestGuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","operation":"SOCIAL_MEDIA","input":null,"documents":[]}`,
 			wantCode:   httpx.CodeValidationError,
 			wantFields: []httpx.FieldError{{Path: "input", Code: httpx.FieldRequired}},
 		},
 		{
 			name:     "invalid document",
-			body:     `{"requestId":"11111111-1111-4111-8111-111111111111","operation":"REGISTER_COMPARE","operationVersion":1,"input":{},"documents":[{"documentId":"x","ordinal":0}]}`,
+			body:     `{"requestId":"11111111-1111-4111-8111-111111111111","requestGuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","operation":"REGISTER_COMPARE","input":{},"documents":[{"documentId":"x"}]}`,
 			wantCode: httpx.CodeValidationError,
 			wantFields: []httpx.FieldError{
 				{Path: "documents[0].documentId", Code: httpx.FieldInvalidFormat},
-				{Path: "documents[0].role", Code: httpx.FieldRequired},
-				{Path: "documents[0].ordinal", Code: httpx.FieldOutOfRange},
 				{Path: "documents[0].attstoreUrl", Code: httpx.FieldRequired},
 			},
 		},
@@ -251,10 +248,11 @@ func TestCreate_UsecaseErrors(t *testing.T) {
 		wantCode   string
 	}{
 		{task.ErrIdempotencyConflict, http.StatusConflict, "IDEMPOTENCY_CONFLICT"},
-		{task.ErrRequestIDUnavailable, http.StatusConflict, "REQUEST_ID_UNAVAILABLE"},
+		{task.ErrRequestGUIDUnavailable, http.StatusConflict, "REQUEST_GUID_UNAVAILABLE"},
 		{task.ErrOperationNotEnabled, http.StatusUnprocessableEntity, "OPERATION_NOT_ENABLED"},
 		{&task.ValidationError{Fields: []task.FieldError{{Path: "input.iin", Code: "INVALID_FORMAT"}}}, http.StatusUnprocessableEntity, httpx.CodeValidationError},
 		{fmt.Errorf("wrapped: %w", task.ErrIdempotencyConflict), http.StatusConflict, "IDEMPOTENCY_CONFLICT"},
+		{fmt.Errorf("wrapped: %w", task.ErrStorageUnavailable), http.StatusServiceUnavailable, httpx.CodeUnavailable},
 		{fmt.Errorf("storage down"), http.StatusInternalServerError, httpx.CodeInternalError},
 	}
 	for _, tt := range tests {
@@ -277,28 +275,27 @@ func TestCreate_UsecaseErrors(t *testing.T) {
 func TestGet(t *testing.T) {
 	completed := createdAt.Add(time.Hour)
 	svc := &taskServiceMock{
-		GetFunc: func(_ context.Context, callerID string, requestID uuid.UUID) (domain.Task, error) {
+		GetFunc: func(_ context.Context, callerID string, requestGUID uuid.UUID) (domain.Task, error) {
 			return domain.Task{
-				RequestID:        requestID,
-				CallerID:         callerID,
-				Operation:        domain.OperationSocialMedia,
-				OperationVersion: 1,
-				Status:           domain.StatusSucceeded,
-				StateVersion:     4,
-				CreatedAt:        createdAt,
-				UpdatedAt:        completed,
-				CompletedAt:      &completed,
-				Result:           json.RawMessage(`{"found":true}`),
+				RequestID:   uuid.MustParse(testRequestID),
+				RequestGUID: requestGUID,
+				CallerID:    callerID,
+				Operation:   domain.OperationSocialMedia,
+				Status:      domain.StatusSucceeded,
+				CreatedAt:   createdAt,
+				UpdatedAt:   completed,
+				CompletedAt: &completed,
+				Result:      json.RawMessage(`{"found":true}`),
 			}, nil
 		},
 	}
-	w := do(newEngine(svc), http.MethodGet, "/api/v1/tasks/"+testRequestID, "")
+	w := do(newEngine(svc), http.MethodGet, "/api/v1/tasks/"+testRequestGUID, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body)
 	}
-	want := `{"requestId":"11111111-1111-4111-8111-111111111111","operation":"SOCIAL_MEDIA","operationVersion":1,"status":"SUCCEEDED","stateVersion":4,` +
+	want := `{"requestId":"11111111-1111-4111-8111-111111111111","requestGuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","operation":"SOCIAL_MEDIA","status":"SUCCEEDED",` +
 		`"createdAt":"2026-10-13T08:00:00Z","updatedAt":"2026-10-13T09:00:00Z","completedAt":"2026-10-13T09:00:00Z",` +
-		`"result":{"found":true},"reports":[],"error":null,"attention":null}`
+		`"result":{"found":true},"error":null}`
 	if w.Body.String() != want {
 		t.Errorf("body =\n%s\nwant\n%s", w.Body, want)
 	}
@@ -309,12 +306,12 @@ func TestGet(t *testing.T) {
 
 func TestGet_NullResult(t *testing.T) {
 	svc := &taskServiceMock{
-		GetFunc: func(_ context.Context, _ string, requestID uuid.UUID) (domain.Task, error) {
-			return domain.Task{RequestID: requestID, Status: domain.StatusReadyToSubmit}, nil
+		GetFunc: func(_ context.Context, _ string, requestGUID uuid.UUID) (domain.Task, error) {
+			return domain.Task{RequestGUID: requestGUID, Status: domain.StatusReadyToSubmit}, nil
 		},
 	}
-	w := do(newEngine(svc), http.MethodGet, "/api/v1/tasks/"+testRequestID, "")
-	if !strings.Contains(w.Body.String(), `"completedAt":null,"result":null,"reports":[]`) {
+	w := do(newEngine(svc), http.MethodGet, "/api/v1/tasks/"+testRequestGUID, "")
+	if !strings.Contains(w.Body.String(), `"completedAt":null,"result":null,"error":null`) {
 		t.Errorf("body = %s", w.Body)
 	}
 }
@@ -326,7 +323,7 @@ func TestGet_Errors(t *testing.T) {
 		},
 	}
 
-	w := do(newEngine(notFound), http.MethodGet, "/api/v1/tasks/"+testRequestID, "")
+	w := do(newEngine(notFound), http.MethodGet, "/api/v1/tasks/"+testRequestGUID, "")
 	if w.Code != http.StatusNotFound || decodeError(t, w).Error.Code != "TASK_NOT_FOUND" {
 		t.Errorf("not found: status = %d, body %s", w.Code, w.Body)
 	}

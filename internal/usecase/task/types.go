@@ -11,11 +11,13 @@ import (
 
 var (
 	ErrTaskNotFound = errors.New("task not found")
-	// ErrIdempotencyConflict: the requestId is already registered by this caller with different input.
+	// ErrIdempotencyConflict: the requestGuid is already registered by this caller with different data.
 	ErrIdempotencyConflict = errors.New("idempotency conflict")
-	// ErrRequestIDUnavailable: the requestId belongs to another caller.
-	ErrRequestIDUnavailable = errors.New("request id unavailable")
-	ErrOperationNotEnabled  = errors.New("operation not enabled")
+	// ErrRequestGUIDUnavailable: the requestGuid belongs to another caller.
+	ErrRequestGUIDUnavailable = errors.New("request guid unavailable")
+	ErrOperationNotEnabled    = errors.New("operation not enabled")
+	// ErrStorageUnavailable: the database cannot be reached; the request may be retried.
+	ErrStorageUnavailable = errors.New("storage unavailable")
 )
 
 // ValidationError reports semantically invalid input for an operation.
@@ -34,24 +36,21 @@ func (e *ValidationError) Error() string {
 
 // Field-level error codes returned in ValidationError.
 const (
-	CodeRequired           = "REQUIRED"
-	CodeInvalidFormat      = "INVALID_FORMAT"
-	CodeInvalidType        = "INVALID_TYPE"
-	CodeInvalidValue       = "INVALID_VALUE"
-	CodeUnknownField       = "UNKNOWN_FIELD"
-	CodeTooLong            = "TOO_LONG"
-	CodeOutOfRange         = "OUT_OF_RANGE"
-	CodeDuplicate          = "DUPLICATE"
-	CodeNotAllowed         = "NOT_ALLOWED"
-	CodeInvalidCount       = "INVALID_COUNT"
-	CodeUnsupportedVersion = "UNSUPPORTED_VERSION"
+	CodeRequired      = "REQUIRED"
+	CodeInvalidFormat = "INVALID_FORMAT"
+	CodeInvalidType   = "INVALID_TYPE"
+	CodeUnknownField  = "UNKNOWN_FIELD"
+	CodeTooLong       = "TOO_LONG"
+	CodeDuplicate     = "DUPLICATE"
+	CodeNotAllowed    = "NOT_ALLOWED"
+	CodeInvalidCount  = "INVALID_COUNT"
 )
 
 type RegisterInput struct {
-	CallerID         string
-	RequestID        uuid.UUID
-	Operation        domain.Operation
-	OperationVersion int
-	Input            json.RawMessage
-	Documents        []domain.Document
+	CallerID    string
+	RequestGUID uuid.UUID
+	RequestID   uuid.UUID
+	Operation   domain.Operation
+	Input       json.RawMessage
+	Documents   []domain.Document
 }

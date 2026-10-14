@@ -22,24 +22,24 @@ var canonicalUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-
 
 // Fields are pointers so a missing field can be told apart from a zero value.
 type CreateTaskRequest struct {
-	RequestID        *string `json:"requestId" format:"uuid" example:"11111111-1111-4111-8111-111111111111" validate:"required"`
-	Operation        *string `json:"operation" enums:"SOCIAL_MEDIA,REGISTER_COMPARE" example:"SOCIAL_MEDIA" validate:"required"`
-	OperationVersion *int    `json:"operationVersion" example:"1" validate:"required"`
+	// Camunda request the task belongs to; several tasks can share it.
+	RequestID *string `json:"requestId" format:"uuid" example:"11111111-1111-4111-8111-111111111111" validate:"required"`
+	// Unique ID of this task. Reuse it when retrying the same task.
+	RequestGUID *string `json:"requestGuid" format:"uuid" example:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" validate:"required"`
+	Operation   *string `json:"operation" enums:"SOCIAL_MEDIA,REGISTER_COMPARE" example:"SOCIAL_MEDIA" validate:"required"`
 	// Operation-specific JSON object.
 	// SOCIAL_MEDIA: {"iin": "<12 digits>", "fullName": "<1..500 chars>"}.
 	// REGISTER_COMPARE: {"adjudicate": true}.
 	Input json.RawMessage `json:"input" swaggertype:"object" validate:"required"`
-	// Empty array for operations without files. REGISTER_COMPARE: exactly two, roles A and B, ordinal 1.
+	// Empty array for operations without files. REGISTER_COMPARE: exactly two.
+	// Order matters: AI results refer to files by position (only_a = first, only_b = second).
 	Documents *[]DocumentInput `json:"documents" validate:"required"`
 }
 
 type DocumentInput struct {
+	// Unique within one task.
 	DocumentID  *string `json:"documentId" format:"uuid" example:"22222222-2222-4222-8222-222222222222" validate:"required"`
-	Role        *string `json:"role" example:"A" validate:"required"`
-	Ordinal     *int    `json:"ordinal" minimum:"1" example:"1" validate:"required"`
 	AttstoreURL *string `json:"attstoreUrl" maxLength:"8192" example:"https://attstore.example/documents/1" validate:"required"`
-	// Required for document operations.
-	SourceVersion *string `json:"sourceVersion" example:"3"`
 }
 
 // toInput checks the request shape. Operation-specific rules are the usecase's job.
@@ -53,16 +53,16 @@ func (r CreateTaskRequest) toInput(callerID string) (task.RegisterInput, []httpx
 		in.RequestID = id
 	}
 
+	if id, fe := parseUUID("requestGuid", r.RequestGUID); fe != nil {
+		fields = append(fields, *fe)
+	} else {
+		in.RequestGUID = id
+	}
+
 	if r.Operation == nil || *r.Operation == "" {
 		fields = append(fields, httpx.FieldError{Path: "operation", Code: httpx.FieldRequired})
 	} else {
 		in.Operation = domain.Operation(*r.Operation)
-	}
-
-	if r.OperationVersion == nil {
-		fields = append(fields, httpx.FieldError{Path: "operationVersion", Code: httpx.FieldRequired})
-	} else {
-		in.OperationVersion = *r.OperationVersion
 	}
 
 	trimmed := bytes.TrimSpace(r.Input)
@@ -99,21 +99,6 @@ func (d DocumentInput) toDomain(path string) (domain.Document, []httpx.FieldErro
 		doc.DocumentID = id
 	}
 
-	if d.Role == nil || *d.Role == "" {
-		fields = append(fields, httpx.FieldError{Path: path + ".role", Code: httpx.FieldRequired})
-	} else {
-		doc.Role = *d.Role
-	}
-
-	switch {
-	case d.Ordinal == nil:
-		fields = append(fields, httpx.FieldError{Path: path + ".ordinal", Code: httpx.FieldRequired})
-	case *d.Ordinal < 1:
-		fields = append(fields, httpx.FieldError{Path: path + ".ordinal", Code: httpx.FieldOutOfRange})
-	default:
-		doc.Ordinal = *d.Ordinal
-	}
-
 	switch {
 	case d.AttstoreURL == nil || *d.AttstoreURL == "":
 		fields = append(fields, httpx.FieldError{Path: path + ".attstoreUrl", Code: httpx.FieldRequired})
@@ -121,10 +106,6 @@ func (d DocumentInput) toDomain(path string) (domain.Document, []httpx.FieldErro
 		fields = append(fields, httpx.FieldError{Path: path + ".attstoreUrl", Code: httpx.FieldTooLong})
 	default:
 		doc.AttstoreURL = *d.AttstoreURL
-	}
-
-	if d.SourceVersion != nil {
-		doc.SourceVersion = *d.SourceVersion
 	}
 
 	return doc, fields
@@ -141,34 +122,25 @@ func parseUUID(path string, s *string) (uuid.UUID, *httpx.FieldError) {
 }
 
 type CreateTaskResponse struct {
-	RequestID uuid.UUID `json:"requestId" format:"uuid" example:"11111111-1111-4111-8111-111111111111"`
-	Operation string    `json:"operation" example:"SOCIAL_MEDIA"`
-	Status    string    `json:"status" enums:"WAITING_DOCUMENTS,READY_TO_SUBMIT" example:"READY_TO_SUBMIT"`
-	CreatedAt time.Time `json:"createdAt" example:"2026-10-13T08:00:00Z"`
+	RequestID   uuid.UUID `json:"requestId" format:"uuid" example:"11111111-1111-4111-8111-111111111111"`
+	RequestGUID uuid.UUID `json:"requestGuid" format:"uuid" example:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"`
+	Operation   string    `json:"operation" example:"SOCIAL_MEDIA"`
+	Status      string    `json:"status" enums:"WAITING_DOCUMENTS,READY_TO_SUBMIT" example:"READY_TO_SUBMIT"`
+	CreatedAt   time.Time `json:"createdAt" example:"2026-10-13T08:00:00Z"`
 }
 
 type TaskView struct {
-	RequestID        uuid.UUID `json:"requestId" format:"uuid" example:"11111111-1111-4111-8111-111111111111"`
-	Operation        string    `json:"operation" example:"SOCIAL_MEDIA"`
-	OperationVersion int       `json:"operationVersion" example:"1"`
-	Status           string    `json:"status" enums:"WAITING_DOCUMENTS,PREPARING_DOCUMENTS,READY_TO_SUBMIT,SUBMITTING,SUBMISSION_UNKNOWN,REMOTE_QUEUED,REMOTE_RUNNING,NEEDS_ATTENTION,SUCCEEDED,FAILED" example:"READY_TO_SUBMIT"`
-	// Increments on every state change; repeated polls of the same AI state do not change it.
-	StateVersion int64      `json:"stateVersion" example:"1"`
-	CreatedAt    time.Time  `json:"createdAt" example:"2026-10-13T08:00:00Z"`
-	UpdatedAt    time.Time  `json:"updatedAt" example:"2026-10-13T08:00:00Z"`
-	CompletedAt  *time.Time `json:"completedAt" extensions:"x-nullable"`
-	// Operation-specific result JSON; null until the task succeeds.
-	Result    json.RawMessage `json:"result" swaggertype:"object" extensions:"x-nullable"`
-	Reports   []ReportLink    `json:"reports"`
-	Error     *Failure        `json:"error" extensions:"x-nullable"`
-	Attention *Failure        `json:"attention" extensions:"x-nullable"`
-}
-
-type ReportLink struct {
-	Type string `json:"type" example:"WORD"`
-	URL  string `json:"url" example:"https://s3.example/reports/1.docx"`
-	// Null means the expiry is unknown, not that the link never expires.
-	ExpiresAt *time.Time `json:"expiresAt" extensions:"x-nullable"`
+	RequestID   uuid.UUID  `json:"requestId" format:"uuid" example:"11111111-1111-4111-8111-111111111111"`
+	RequestGUID uuid.UUID  `json:"requestGuid" format:"uuid" example:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"`
+	Operation   string     `json:"operation" example:"SOCIAL_MEDIA"`
+	Status      string     `json:"status" enums:"WAITING_DOCUMENTS,PREPARING_DOCUMENTS,READY_TO_SUBMIT,SUBMITTING,SUBMISSION_UNKNOWN,REMOTE_QUEUED,REMOTE_RUNNING,NEEDS_ATTENTION,SUCCEEDED,FAILED" example:"READY_TO_SUBMIT"`
+	CreatedAt   time.Time  `json:"createdAt" example:"2026-10-13T08:00:00Z"`
+	UpdatedAt   time.Time  `json:"updatedAt" example:"2026-10-13T08:00:00Z"`
+	CompletedAt *time.Time `json:"completedAt" extensions:"x-nullable"`
+	// AI result JSON as AI returned it; null until the task succeeds.
+	Result json.RawMessage `json:"result" swaggertype:"object" extensions:"x-nullable"`
+	// Set when the task is FAILED or NEEDS_ATTENTION.
+	Error *Failure `json:"error" extensions:"x-nullable"`
 }
 
 type Failure struct {
@@ -178,51 +150,40 @@ type Failure struct {
 
 func toCreateResponse(t domain.Task) CreateTaskResponse {
 	return CreateTaskResponse{
-		RequestID: t.RequestID,
-		Operation: string(t.Operation),
-		Status:    string(t.Status),
-		CreatedAt: t.CreatedAt.UTC(),
+		RequestID:   t.RequestID,
+		RequestGUID: t.RequestGUID,
+		Operation:   string(t.Operation),
+		Status:      string(t.Status),
+		CreatedAt:   t.CreatedAt.UTC(),
 	}
 }
 
 func toTaskView(t domain.Task) TaskView {
-	reports := make([]ReportLink, 0, len(t.Reports))
-	for _, r := range t.Reports {
-		reports = append(reports, ReportLink{Type: r.Type, URL: r.URL, ExpiresAt: utcPtr(r.ExpiresAt)})
-	}
-
 	result := t.Result
 	if len(result) == 0 {
 		result = json.RawMessage("null")
 	}
 
+	var failure *Failure
+	if t.Error != nil {
+		failure = &Failure{Code: t.Error.Code, Message: t.Error.Message}
+	}
+
+	var completedAt *time.Time
+	if t.CompletedAt != nil {
+		utc := t.CompletedAt.UTC()
+		completedAt = &utc
+	}
+
 	return TaskView{
-		RequestID:        t.RequestID,
-		Operation:        string(t.Operation),
-		OperationVersion: t.OperationVersion,
-		Status:           string(t.Status),
-		StateVersion:     t.StateVersion,
-		CreatedAt:        t.CreatedAt.UTC(),
-		UpdatedAt:        t.UpdatedAt.UTC(),
-		CompletedAt:      utcPtr(t.CompletedAt),
-		Result:           result,
-		Reports:          reports,
-		Error:            toFailure(t.Error),
-		Attention:        toFailure(t.Attention),
+		RequestID:   t.RequestID,
+		RequestGUID: t.RequestGUID,
+		Operation:   string(t.Operation),
+		Status:      string(t.Status),
+		CreatedAt:   t.CreatedAt.UTC(),
+		UpdatedAt:   t.UpdatedAt.UTC(),
+		CompletedAt: completedAt,
+		Result:      result,
+		Error:       failure,
 	}
-}
-
-func toFailure(f *domain.Failure) *Failure {
-	if f == nil {
-		return nil
-	}
-	return &Failure{Code: f.Code, Message: f.Message}
-}
-
-func utcPtr(t *time.Time) *time.Time {
-	if t == nil {
-		return nil
-	}
-	u := t.UTC()
-	return &u
 }

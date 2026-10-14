@@ -17,7 +17,7 @@ const docTemplate = `{
     "paths": {
         "/api/v1/tasks": {
             "post": {
-                "description": "Сохраняет задачу BPM и возвращает 202 после commit. Повтор с тем же requestId и тем же входом возвращает 200 и текущее состояние; другой вход — 409 IDEMPOTENCY_CONFLICT.",
+                "description": "Сохраняет задачу BPM и возвращает 202 после commit. Повтор с тем же requestGuid и теми же данными возвращает 200 и текущее состояние; другой вход — 409 IDEMPOTENCY_CONFLICT.",
                 "consumes": [
                     "application/json"
                 ],
@@ -54,7 +54,7 @@ const docTemplate = `{
                         "headers": {
                             "Location": {
                                 "type": "string",
-                                "description": "/api/v1/tasks/{requestId}"
+                                "description": "/api/v1/tasks/{requestGuid}"
                             }
                         }
                     },
@@ -65,7 +65,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "IDEMPOTENCY_CONFLICT, REQUEST_ID_UNAVAILABLE",
+                        "description": "IDEMPOTENCY_CONFLICT, REQUEST_GUID_UNAVAILABLE",
                         "schema": {
                             "$ref": "#/definitions/httpx.ErrorResponse"
                         }
@@ -87,11 +87,17 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/httpx.ErrorResponse"
                         }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE: database unreachable, retry with the same body",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
                     }
                 }
             }
         },
-        "/api/v1/tasks/{requestId}": {
+        "/api/v1/tasks/{requestGuid}": {
             "get": {
                 "description": "Текущее состояние задачи, результат и ссылки на отчёты.",
                 "produces": [
@@ -105,8 +111,8 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "format": "uuid",
-                        "description": "Request ID",
-                        "name": "requestId",
+                        "description": "Request GUID",
+                        "name": "requestGuid",
                         "in": "path",
                         "required": true
                     }
@@ -132,6 +138,12 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
                         "schema": {
                             "$ref": "#/definitions/httpx.ErrorResponse"
                         }
@@ -197,12 +209,12 @@ const docTemplate = `{
                 "documents",
                 "input",
                 "operation",
-                "operationVersion",
+                "requestGuid",
                 "requestId"
             ],
             "properties": {
                 "documents": {
-                    "description": "Empty array for operations without files. REGISTER_COMPARE: exactly two, roles A and B, ordinal 1.",
+                    "description": "Empty array for operations without files. REGISTER_COMPARE: exactly two.\nOrder matters: AI results refer to files by position (only_a = first, only_b = second).",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/task.DocumentInput"
@@ -220,11 +232,14 @@ const docTemplate = `{
                     ],
                     "example": "SOCIAL_MEDIA"
                 },
-                "operationVersion": {
-                    "type": "integer",
-                    "example": 1
+                "requestGuid": {
+                    "description": "Unique ID of this task. Reuse it when retrying the same task.",
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
                 },
                 "requestId": {
+                    "description": "Camunda request the task belongs to; several tasks can share it.",
                     "type": "string",
                     "format": "uuid",
                     "example": "11111111-1111-4111-8111-111111111111"
@@ -241,6 +256,11 @@ const docTemplate = `{
                 "operation": {
                     "type": "string",
                     "example": "SOCIAL_MEDIA"
+                },
+                "requestGuid": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
                 },
                 "requestId": {
                     "type": "string",
@@ -261,9 +281,7 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "attstoreUrl",
-                "documentId",
-                "ordinal",
-                "role"
+                "documentId"
             ],
             "properties": {
                 "attstoreUrl": {
@@ -272,23 +290,10 @@ const docTemplate = `{
                     "example": "https://attstore.example/documents/1"
                 },
                 "documentId": {
+                    "description": "Unique within one task.",
                     "type": "string",
                     "format": "uuid",
                     "example": "22222222-2222-4222-8222-222222222222"
-                },
-                "ordinal": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "example": 1
-                },
-                "role": {
-                    "type": "string",
-                    "example": "A"
-                },
-                "sourceVersion": {
-                    "description": "Required for document operations.",
-                    "type": "string",
-                    "example": "3"
                 }
             }
         },
@@ -304,35 +309,9 @@ const docTemplate = `{
                 }
             }
         },
-        "task.ReportLink": {
-            "type": "object",
-            "properties": {
-                "expiresAt": {
-                    "description": "Null means the expiry is unknown, not that the link never expires.",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "type": {
-                    "type": "string",
-                    "example": "WORD"
-                },
-                "url": {
-                    "type": "string",
-                    "example": "https://s3.example/reports/1.docx"
-                }
-            }
-        },
         "task.TaskView": {
             "type": "object",
             "properties": {
-                "attention": {
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/task.Failure"
-                        }
-                    ],
-                    "x-nullable": true
-                },
                 "completedAt": {
                     "type": "string",
                     "x-nullable": true
@@ -342,6 +321,7 @@ const docTemplate = `{
                     "example": "2026-10-13T08:00:00Z"
                 },
                 "error": {
+                    "description": "Set when the task is FAILED or NEEDS_ATTENTION.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/task.Failure"
@@ -353,15 +333,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "SOCIAL_MEDIA"
                 },
-                "operationVersion": {
-                    "type": "integer",
-                    "example": 1
-                },
-                "reports": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/task.ReportLink"
-                    }
+                "requestGuid": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
                 },
                 "requestId": {
                     "type": "string",
@@ -369,14 +344,9 @@ const docTemplate = `{
                     "example": "11111111-1111-4111-8111-111111111111"
                 },
                 "result": {
-                    "description": "Operation-specific result JSON; null until the task succeeds.",
+                    "description": "AI result JSON as AI returned it; null until the task succeeds.",
                     "type": "object",
                     "x-nullable": true
-                },
-                "stateVersion": {
-                    "description": "Increments on every state change; repeated polls of the same AI state do not change it.",
-                    "type": "integer",
-                    "example": 1
                 },
                 "status": {
                     "type": "string",
@@ -410,7 +380,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "Integrator.Api",
-	Description:      "Регистрация и чтение задач BPM. Этап 1: хранилище в памяти, состояние теряется при перезапуске.",
+	Description:      "Регистрация и чтение задач BPM.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

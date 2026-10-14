@@ -2,6 +2,8 @@
 package httpx
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,6 +34,7 @@ const (
 	CodeNotFound         = "NOT_FOUND"
 	CodeMethodNotAllowed = "METHOD_NOT_ALLOWED"
 	CodeInternalError    = "INTERNAL_ERROR"
+	CodeUnavailable      = "SERVICE_UNAVAILABLE"
 )
 
 // Field-level error codes.
@@ -42,7 +45,6 @@ const (
 	FieldUnknown       = "UNKNOWN_FIELD"
 	FieldDuplicateKey  = "DUPLICATE_KEY"
 	FieldTooLong       = "TOO_LONG"
-	FieldOutOfRange    = "OUT_OF_RANGE"
 )
 
 func WriteError(c *gin.Context, status int, code, message string, fields ...FieldError) {
@@ -51,6 +53,18 @@ func WriteError(c *gin.Context, status int, code, message string, fields ...Fiel
 			Code:    code,
 			Message: message,
 			Fields:  fields,
+		},
+	})
+}
+
+// WriteServiceUnavailable tells the client the database could not be reached.
+// Registration is idempotent, so repeating the request with the same body is safe.
+func WriteServiceUnavailable(c *gin.Context) {
+	c.AbortWithStatusJSON(http.StatusServiceUnavailable, ErrorResponse{
+		Error: ErrorDetail{
+			Code:      CodeUnavailable,
+			Message:   "Сервис временно недоступен, повторите запрос",
+			Retryable: true,
 		},
 	})
 }

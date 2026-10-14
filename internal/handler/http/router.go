@@ -1,8 +1,10 @@
 package http
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -12,16 +14,21 @@ import (
 	"github.com/d9293/halyk-genai-integrator/internal/handler/http/task"
 )
 
+const readinessTimeout = 2 * time.Second
+
 type Router struct {
 	callerID       string
 	swaggerEnabled bool
-	taskHandler    *task.Handler
+	// checkReady returns an error when a dependency the API needs (the database) is unreachable.
+	checkReady  func(ctx context.Context) error
+	taskHandler *task.Handler
 }
 
-func NewRouter(callerID string, swaggerEnabled bool, taskHandler *task.Handler) *Router {
+func NewRouter(callerID string, swaggerEnabled bool, checkReady func(ctx context.Context) error, taskHandler *task.Handler) *Router {
 	return &Router{
 		callerID:       callerID,
 		swaggerEnabled: swaggerEnabled,
+		checkReady:     checkReady,
 		taskHandler:    taskHandler,
 	}
 }
@@ -40,9 +47,11 @@ func (router *Router) Engine() *gin.Engine {
 		httpx.WriteError(c, http.StatusMethodNotAllowed, httpx.CodeMethodNotAllowed, "Метод не поддерживается")
 	})
 
+	// Liveness never checks dependencies: a database outage must not restart the pod.
 	r.GET("/health/liveness", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	r.GET("/health/readiness", router.readiness)
 	if router.swaggerEnabled {
 		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	}
@@ -51,4 +60,16 @@ func (router *Router) Engine() *gin.Engine {
 	router.taskHandler.Routes(api)
 
 	return r
+}
+
+func (router *Router) readiness(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), readinessTimeout)
+	defer cancel()
+
+	if err := router.checkReady(ctx); err != nil {
+		slog.WarnContext(ctx, "not ready", "error", err)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }

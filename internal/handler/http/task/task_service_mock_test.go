@@ -21,7 +21,7 @@ var _ taskService = &taskServiceMock{}
 //
 //		// make and configure a mocked taskService
 //		mockedtaskService := &taskServiceMock{
-//			GetFunc: func(ctx context.Context, callerID string, requestID uuid.UUID) (domain.Task, error) {
+//			GetFunc: func(ctx context.Context, callerID string, requestGUID uuid.UUID) (domain.Task, error) {
 //				panic("mock out the Get method")
 //			},
 //			RegisterFunc: func(ctx context.Context, in task.RegisterInput) (domain.Task, bool, error) {
@@ -35,7 +35,7 @@ var _ taskService = &taskServiceMock{}
 //	}
 type taskServiceMock struct {
 	// GetFunc mocks the Get method.
-	GetFunc func(ctx context.Context, callerID string, requestID uuid.UUID) (domain.Task, error)
+	GetFunc func(ctx context.Context, callerID string, requestGUID uuid.UUID) (domain.Task, error)
 
 	// RegisterFunc mocks the Register method.
 	RegisterFunc func(ctx context.Context, in task.RegisterInput) (domain.Task, bool, error)
@@ -48,8 +48,8 @@ type taskServiceMock struct {
 			Ctx context.Context
 			// CallerID is the callerID argument value.
 			CallerID string
-			// RequestID is the requestID argument value.
-			RequestID uuid.UUID
+			// RequestGUID is the requestGUID argument value.
+			RequestGUID uuid.UUID
 		}
 		// Register holds details about calls to the Register method.
 		Register []struct {
@@ -64,23 +64,23 @@ type taskServiceMock struct {
 }
 
 // Get calls GetFunc.
-func (mock *taskServiceMock) Get(ctx context.Context, callerID string, requestID uuid.UUID) (domain.Task, error) {
+func (mock *taskServiceMock) Get(ctx context.Context, callerID string, requestGUID uuid.UUID) (domain.Task, error) {
 	if mock.GetFunc == nil {
 		panic("taskServiceMock.GetFunc: method is nil but taskService.Get was just called")
 	}
 	callInfo := struct {
-		Ctx       context.Context
-		CallerID  string
-		RequestID uuid.UUID
+		Ctx         context.Context
+		CallerID    string
+		RequestGUID uuid.UUID
 	}{
-		Ctx:       ctx,
-		CallerID:  callerID,
-		RequestID: requestID,
+		Ctx:         ctx,
+		CallerID:    callerID,
+		RequestGUID: requestGUID,
 	}
 	mock.lockGet.Lock()
 	mock.calls.Get = append(mock.calls.Get, callInfo)
 	mock.lockGet.Unlock()
-	return mock.GetFunc(ctx, callerID, requestID)
+	return mock.GetFunc(ctx, callerID, requestGUID)
 }
 
 // GetCalls gets all the calls that were made to Get.
@@ -88,14 +88,14 @@ func (mock *taskServiceMock) Get(ctx context.Context, callerID string, requestID
 //
 //	len(mockedtaskService.GetCalls())
 func (mock *taskServiceMock) GetCalls() []struct {
-	Ctx       context.Context
-	CallerID  string
-	RequestID uuid.UUID
+	Ctx         context.Context
+	CallerID    string
+	RequestGUID uuid.UUID
 } {
 	var calls []struct {
-		Ctx       context.Context
-		CallerID  string
-		RequestID uuid.UUID
+		Ctx         context.Context
+		CallerID    string
+		RequestGUID uuid.UUID
 	}
 	mock.lockGet.RLock()
 	calls = mock.calls.Get
