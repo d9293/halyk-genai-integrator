@@ -26,7 +26,9 @@ variables already set in the environment take priority.
 ## Develop
 
 ```sh
-make test       # go test -race ./...
+make test              # unit tests; integration tests are skipped
+make test-integration  # all tests, incl. integration tests against a throwaway Postgres in Docker
+make db-init           # create schema and tables on the local infra Postgres (once)
 make swagger    # regenerate docs/swagger after changing handler annotations (needs swag CLI)
 make mocks      # regenerate moq mocks (needs moq)
 ```
