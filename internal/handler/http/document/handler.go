@@ -56,18 +56,18 @@ func (h *Handler) Routes(rg *gin.RouterGroup) {
 //	@Tags			documents (worker)
 //	@Accept			json
 //	@Produce		json
-//	@Param			request	body		ClaimRequest	true	"Claim"
+//	@Param			request	body		httpx.ClaimRequest	true	"Claim"
 //	@Success		200		{object}	ClaimResponse
 //	@Failure		400		{object}	httpx.ErrorResponse	"MALFORMED_JSON, VALIDATION_ERROR"
 //	@Failure		500		{object}	httpx.ErrorResponse	"INTERNAL_ERROR"
 //	@Failure		503		{object}	httpx.ErrorResponse	"SERVICE_UNAVAILABLE"
 //	@Router			/internal/v1/documents/claim [post]
 func (h *Handler) claim(c *gin.Context) {
-	var req ClaimRequest
+	var req httpx.ClaimRequest
 	if !httpx.DecodeJSON(c, &req) {
 		return
 	}
-	workerID, limit, fields := req.validate()
+	workerID, limit, fields := req.Validate()
 	if len(fields) > 0 {
 		httpx.WriteError(c, http.StatusBadRequest, httpx.CodeValidationError, messageInvalidRequest, fields...)
 		return
@@ -95,7 +95,7 @@ func (h *Handler) claim(c *gin.Context) {
 //	@Produce		json
 //	@Param			id		path		string			true	"id from the claim response (not bpmDocumentId)"	format(uuid)
 //	@Param			request	body		CompleteRequest	true	"Copy result"
-//	@Success		200		{object}	AppliedResponse
+//	@Success		200		{object}	httpx.AppliedResponse
 //	@Failure		400		{object}	httpx.ErrorResponse	"MALFORMED_JSON, VALIDATION_ERROR"
 //	@Failure		404		{object}	httpx.ErrorResponse	"DOCUMENT_NOT_FOUND"
 //	@Failure		409		{object}	httpx.ErrorResponse	"CLAIM_LOST: wrong or expired claim token; drop the work"
@@ -121,7 +121,7 @@ func (h *Handler) complete(c *gin.Context) {
 		h.writeUsecaseError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, AppliedResponse{Applied: true})
+	c.JSON(http.StatusOK, httpx.AppliedResponse{Applied: true})
 }
 
 // failure godoc
@@ -133,7 +133,7 @@ func (h *Handler) complete(c *gin.Context) {
 //	@Produce		json
 //	@Param			id		path		string			true	"id from the claim response (not bpmDocumentId)"	format(uuid)
 //	@Param			request	body		FailureRequest	true	"Failure"
-//	@Success		200		{object}	AppliedResponse
+//	@Success		200		{object}	httpx.AppliedResponse
 //	@Failure		400		{object}	httpx.ErrorResponse	"MALFORMED_JSON, VALIDATION_ERROR"
 //	@Failure		404		{object}	httpx.ErrorResponse	"DOCUMENT_NOT_FOUND"
 //	@Failure		409		{object}	httpx.ErrorResponse	"CLAIM_LOST: wrong or expired claim token; drop the work"
@@ -159,7 +159,7 @@ func (h *Handler) failure(c *gin.Context) {
 		h.writeUsecaseError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, AppliedResponse{Applied: true})
+	c.JSON(http.StatusOK, httpx.AppliedResponse{Applied: true})
 }
 
 // renew godoc
@@ -170,8 +170,8 @@ func (h *Handler) failure(c *gin.Context) {
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string			true	"id from the claim response (not bpmDocumentId)"	format(uuid)
-//	@Param			request	body		RenewRequest	true	"Claim to extend"
-//	@Success		200		{object}	RenewResponse
+//	@Param			request	body		httpx.RenewRequest	true	"Claim to extend"
+//	@Success		200		{object}	httpx.RenewResponse
 //	@Failure		400		{object}	httpx.ErrorResponse	"MALFORMED_JSON, VALIDATION_ERROR"
 //	@Failure		404		{object}	httpx.ErrorResponse	"DOCUMENT_NOT_FOUND"
 //	@Failure		409		{object}	httpx.ErrorResponse	"CLAIM_LOST"
@@ -183,11 +183,11 @@ func (h *Handler) renew(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req RenewRequest
+	var req httpx.RenewRequest
 	if !httpx.DecodeJSON(c, &req) {
 		return
 	}
-	claimToken, fields := req.validate()
+	claimToken, fields := req.Validate()
 	if len(fields) > 0 {
 		httpx.WriteError(c, http.StatusBadRequest, httpx.CodeValidationError, messageInvalidRequest, fields...)
 		return
@@ -198,7 +198,7 @@ func (h *Handler) renew(c *gin.Context) {
 		h.writeUsecaseError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, RenewResponse{ClaimUntil: claimUntil.UTC()})
+	c.JSON(http.StatusOK, httpx.RenewResponse{ClaimUntil: claimUntil.UTC()})
 }
 
 func documentID(c *gin.Context) (uuid.UUID, bool) {

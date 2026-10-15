@@ -29,7 +29,9 @@ type Config struct {
 	DocumentMaxCopyAttempts int           `env:"DOCUMENT_MAX_COPY_ATTEMPTS,required"`
 	DocumentRetryBaseDelay  time.Duration `env:"DOCUMENT_RETRY_BASE_DELAY,required"`
 	DocumentRetryMaxDelay   time.Duration `env:"DOCUMENT_RETRY_MAX_DELAY,required"`
-	Postgres                PostgresConfig
+	// SubmissionClaimLease is how long a worker owns a POST to AI in progress without renewing.
+	SubmissionClaimLease time.Duration `env:"SUBMISSION_CLAIM_LEASE,required"`
+	Postgres             PostgresConfig
 }
 
 type PostgresConfig struct {

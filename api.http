@@ -82,3 +82,37 @@ POST {{host}}/internal/v1/documents/{{docId}}/complete
 Content-Type: application/json
 
 {"claimToken":"00000000-0000-4000-8000-000000000000","s3Uri":"s3://ai-input/tasks/demo/0","sizeBytes":1,"checksumSha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}
+
+### ─── Worker API (worker.Request): send ready tasks to AI. Mock for now. ───
+
+### Claim a task to send → 200 with an attempt (attemptId = AI task_id), its input and S3 files
+POST {{host}}/internal/v1/submissions/claim
+Content-Type: application/json
+
+{"workerId":"worker-request-local","limit":1}
+
+> {% client.global.set("attemptId", response.body.items[0].attemptId); client.global.set("submissionToken", response.body.items[0].claimToken); %}
+
+### Renew while the POST to AI is in progress → 200 with a new claimUntil
+POST {{host}}/internal/v1/submissions/{{attemptId}}/renew
+Content-Type: application/json
+
+{"claimToken":"{{submissionToken}}"}
+
+### AI accepted the task → 200 {"applied":true}
+POST {{host}}/internal/v1/submissions/{{attemptId}}/outcome
+Content-Type: application/json
+
+{"claimToken":"{{submissionToken}}","outcome":"ACCEPTED","remoteStatus":"QUEUED"}
+
+### No reliable answer from AI (timeout) → 200; polling will find out
+POST {{host}}/internal/v1/submissions/{{attemptId}}/outcome
+Content-Type: application/json
+
+{"claimToken":"{{submissionToken}}","outcome":"UNKNOWN","failure":{"code":"AI_TIMEOUT","message":"No response from AI within 30s"}}
+
+### AI refused the task → 200; the AI place is freed
+POST {{host}}/internal/v1/submissions/{{attemptId}}/outcome
+Content-Type: application/json
+
+{"claimToken":"{{submissionToken}}","outcome":"REJECTED","failure":{"code":"INVALID_INPUT","message":"AI rejected the files"}}

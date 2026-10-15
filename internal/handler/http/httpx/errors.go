@@ -46,6 +46,7 @@ const (
 	FieldDuplicateKey  = "DUPLICATE_KEY"
 	FieldTooLong       = "TOO_LONG"
 	FieldOutOfRange    = "OUT_OF_RANGE"
+	FieldNotAllowed    = "NOT_ALLOWED"
 )
 
 func WriteError(c *gin.Context, status int, code, message string, fields ...FieldError) {

@@ -164,7 +164,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/document.ClaimRequest"
+                            "$ref": "#/definitions/httpx.ClaimRequest"
                         }
                     }
                 ],
@@ -232,7 +232,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/document.AppliedResponse"
+                            "$ref": "#/definitions/httpx.AppliedResponse"
                         }
                     },
                     "400": {
@@ -304,7 +304,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/document.AppliedResponse"
+                            "$ref": "#/definitions/httpx.AppliedResponse"
                         }
                     },
                     "400": {
@@ -368,7 +368,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/document.RenewRequest"
+                            "$ref": "#/definitions/httpx.RenewRequest"
                         }
                     }
                 ],
@@ -376,7 +376,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/document.RenewResponse"
+                            "$ref": "#/definitions/httpx.RenewResponse"
                         }
                     },
                     "400": {
@@ -411,40 +411,205 @@
                     }
                 }
             }
+        },
+        "/internal/v1/submissions/claim": {
+            "post": {
+                "description": "For worker.Request. Hands out tasks that are ready to be sent to AI, each as a new attempt that already holds one of the limited AI places. Send it to AI with attemptId as task_id, then report the outcome. Returns an empty list when nothing is ready or all AI places are taken; ask again later.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "submissions (worker)"
+                ],
+                "summary": "Claim tasks to send to AI",
+                "parameters": [
+                    {
+                        "description": "Claim",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ClaimRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/submission.ClaimResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/submissions/{attemptId}/outcome": {
+            "post": {
+                "description": "For worker.Request. ACCEPTED: AI took the task; it keeps its AI place and will be polled. UNKNOWN: no reliable answer; AI may have the task, so it keeps its place and polling finds out. Never re-send it yourself. REJECTED: AI clearly refused; the place is freed and the task fails.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "submissions (worker)"
+                ],
+                "summary": "Report what happened when sending to AI",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "attemptId from the claim response",
+                        "name": "attemptId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Outcome",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/submission.OutcomeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.AppliedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "ATTEMPT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "CLAIM_LOST: wrong or expired claim token",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/submissions/{attemptId}/renew": {
+            "post": {
+                "description": "For worker.Request. Heartbeat while the call to AI is in progress: extends claimUntil. On 409 stop: the claim expired and the attempt is being treated as UNKNOWN.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "submissions (worker)"
+                ],
+                "summary": "Extend a submission claim",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "attemptId from the claim response",
+                        "name": "attemptId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Claim to extend",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httpx.RenewRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.RenewResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "ATTEMPT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "CLAIM_LOST",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
-        "document.AppliedResponse": {
-            "type": "object",
-            "properties": {
-                "applied": {
-                    "type": "boolean",
-                    "example": true
-                }
-            }
-        },
-        "document.ClaimRequest": {
-            "type": "object",
-            "required": [
-                "limit",
-                "workerId"
-            ],
-            "properties": {
-                "limit": {
-                    "description": "How many documents to take at most.",
-                    "type": "integer",
-                    "maximum": 10,
-                    "minimum": 1,
-                    "example": 5
-                },
-                "workerId": {
-                    "description": "Name of the worker pod, e.g. its HOSTNAME. For diagnostics only.",
-                    "type": "string",
-                    "maxLength": 200,
-                    "example": "worker-request-7d9f8c6b5-x2kqp"
-                }
-            }
-        },
         "document.ClaimResponse": {
             "type": "object",
             "properties": {
@@ -521,28 +686,6 @@
                 }
             }
         },
-        "document.RenewRequest": {
-            "type": "object",
-            "required": [
-                "claimToken"
-            ],
-            "properties": {
-                "claimToken": {
-                    "type": "string",
-                    "format": "uuid",
-                    "example": "claimToken-from-the-claim-response"
-                }
-            }
-        },
-        "document.RenewResponse": {
-            "type": "object",
-            "properties": {
-                "claimUntil": {
-                    "type": "string",
-                    "example": "2026-10-15T08:02:00Z"
-                }
-            }
-        },
         "github_com_d9293_halyk-genai-integrator_internal_handler_http_document.ClaimedDocument": {
             "type": "object",
             "properties": {
@@ -583,6 +726,106 @@
                     "type": "string",
                     "format": "uuid",
                     "example": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                }
+            }
+        },
+        "github_com_d9293_halyk-genai-integrator_internal_handler_http_submission.ClaimedSubmission": {
+            "type": "object",
+            "properties": {
+                "attemptId": {
+                    "description": "Use in /submissions/{attemptId}/outcome and /renew. Send it to AI as task_id.",
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "a77e0000-0000-4000-8000-000000000001"
+                },
+                "attemptNo": {
+                    "description": "1 for the first send of the task, 2 for a re-send after AI lost it, ...",
+                    "type": "integer",
+                    "example": 1
+                },
+                "claimToken": {
+                    "description": "Proof of ownership; send it back with outcome and renew.",
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "7b1e2c3d-0000-4000-8000-000000000001"
+                },
+                "claimUntil": {
+                    "description": "Report the outcome before this time, or renew.",
+                    "type": "string",
+                    "example": "2026-10-15T08:01:00Z"
+                },
+                "documents": {
+                    "description": "S3 copies of the task's files, in the order AI must receive them. Empty for operations without files.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_d9293_halyk-genai-integrator_internal_handler_http_submission.SubmissionDocument"
+                    }
+                },
+                "input": {
+                    "description": "Operation input as registered by BPM, already normalized.",
+                    "type": "object"
+                },
+                "operation": {
+                    "type": "string",
+                    "enum": [
+                        "SOCIAL_MEDIA",
+                        "REGISTER_COMPARE"
+                    ],
+                    "example": "REGISTER_COMPARE"
+                },
+                "requestGuid": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+                },
+                "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "11111111-1111-4111-8111-111111111111"
+                }
+            }
+        },
+        "github_com_d9293_halyk-genai-integrator_internal_handler_http_submission.SubmissionDocument": {
+            "type": "object",
+            "properties": {
+                "position": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "s3Uri": {
+                    "type": "string",
+                    "example": "s3://ai-input/tasks/bbbbbbbb/0"
+                }
+            }
+        },
+        "httpx.AppliedResponse": {
+            "type": "object",
+            "properties": {
+                "applied": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "httpx.ClaimRequest": {
+            "type": "object",
+            "required": [
+                "limit",
+                "workerId"
+            ],
+            "properties": {
+                "limit": {
+                    "description": "How many items to take at most.",
+                    "type": "integer",
+                    "maximum": 10,
+                    "minimum": 1,
+                    "example": 1
+                },
+                "workerId": {
+                    "description": "Name of the worker pod, e.g. its HOSTNAME. For diagnostics only.",
+                    "type": "string",
+                    "maxLength": 200,
+                    "example": "worker-request-7d9f8c6b5-x2kqp"
                 }
             }
         },
@@ -633,6 +876,100 @@
                 "path": {
                     "type": "string",
                     "example": "input.iin"
+                }
+            }
+        },
+        "httpx.RenewRequest": {
+            "type": "object",
+            "required": [
+                "claimToken"
+            ],
+            "properties": {
+                "claimToken": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "claimToken-from-the-claim-response"
+                }
+            }
+        },
+        "httpx.RenewResponse": {
+            "type": "object",
+            "properties": {
+                "claimUntil": {
+                    "type": "string",
+                    "example": "2026-10-15T08:02:00Z"
+                }
+            }
+        },
+        "submission.ClaimResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "description": "Empty when nothing is ready or all AI places are taken.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_d9293_halyk-genai-integrator_internal_handler_http_submission.ClaimedSubmission"
+                    }
+                }
+            }
+        },
+        "submission.FailureInput": {
+            "type": "object",
+            "required": [
+                "code",
+                "message"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "example": "AI_TIMEOUT"
+                },
+                "message": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "example": "No response from AI within 30s"
+                }
+            }
+        },
+        "submission.OutcomeRequest": {
+            "type": "object",
+            "required": [
+                "claimToken",
+                "outcome"
+            ],
+            "properties": {
+                "claimToken": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "claimToken-from-the-claim-response"
+                },
+                "failure": {
+                    "description": "Required for REJECTED, optional for UNKNOWN, not allowed for ACCEPTED.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/submission.FailureInput"
+                        }
+                    ]
+                },
+                "outcome": {
+                    "description": "ACCEPTED: AI confirmed it took the task.\nUNKNOWN: no reliable answer (timeout, lost response, unexpected reply); AI may have it.\nREJECTED: AI clearly refused the task.",
+                    "type": "string",
+                    "enum": [
+                        "ACCEPTED",
+                        "UNKNOWN",
+                        "REJECTED"
+                    ],
+                    "example": "ACCEPTED"
+                },
+                "remoteStatus": {
+                    "description": "Only for ACCEPTED: AI's status of the task. Defaults to QUEUED.",
+                    "type": "string",
+                    "enum": [
+                        "QUEUED",
+                        "PROCESSING"
+                    ],
+                    "example": "QUEUED"
                 }
             }
         },

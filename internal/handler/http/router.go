@@ -12,6 +12,7 @@ import (
 
 	"github.com/d9293/halyk-genai-integrator/internal/handler/http/document"
 	"github.com/d9293/halyk-genai-integrator/internal/handler/http/httpx"
+	"github.com/d9293/halyk-genai-integrator/internal/handler/http/submission"
 	"github.com/d9293/halyk-genai-integrator/internal/handler/http/task"
 )
 
@@ -21,9 +22,10 @@ type Router struct {
 	callerID       string
 	swaggerEnabled bool
 	// checkReady returns an error when a dependency the API needs (the database) is unreachable.
-	checkReady      func(ctx context.Context) error
-	taskHandler     *task.Handler
-	documentHandler *document.Handler
+	checkReady        func(ctx context.Context) error
+	taskHandler       *task.Handler
+	documentHandler   *document.Handler
+	submissionHandler *submission.Handler
 }
 
 func NewRouter(
@@ -32,13 +34,15 @@ func NewRouter(
 	checkReady func(ctx context.Context) error,
 	taskHandler *task.Handler,
 	documentHandler *document.Handler,
+	submissionHandler *submission.Handler,
 ) *Router {
 	return &Router{
-		callerID:        callerID,
-		swaggerEnabled:  swaggerEnabled,
-		checkReady:      checkReady,
-		taskHandler:     taskHandler,
-		documentHandler: documentHandler,
+		callerID:          callerID,
+		swaggerEnabled:    swaggerEnabled,
+		checkReady:        checkReady,
+		taskHandler:       taskHandler,
+		documentHandler:   documentHandler,
+		submissionHandler: submissionHandler,
 	}
 }
 
@@ -72,6 +76,7 @@ func (router *Router) Engine() *gin.Engine {
 	// API for our own workers.
 	internal := r.Group("/internal/v1")
 	router.documentHandler.Routes(internal)
+	router.submissionHandler.Routes(internal)
 
 	return r
 }

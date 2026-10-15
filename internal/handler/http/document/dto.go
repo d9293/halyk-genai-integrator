@@ -12,43 +12,12 @@ import (
 )
 
 const (
-	maxClaimLimit     = 10
-	maxWorkerIDLen    = 200
 	maxURILen         = 8192
 	maxFailureCodeLen = 100
 	maxMessageLen     = 2000
 )
 
 var sha256Hex = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
-
-// Fields are pointers so a missing field can be told apart from a zero value.
-type ClaimRequest struct {
-	// Name of the worker pod, e.g. its HOSTNAME. For diagnostics only.
-	WorkerID *string `json:"workerId" maxLength:"200" example:"worker-request-7d9f8c6b5-x2kqp" validate:"required"`
-	// How many documents to take at most.
-	Limit *int `json:"limit" minimum:"1" maximum:"10" example:"5" validate:"required"`
-}
-
-func (r ClaimRequest) validate() (workerID string, limit int, fields []httpx.FieldError) {
-	switch {
-	case r.WorkerID == nil || strings.TrimSpace(*r.WorkerID) == "":
-		fields = append(fields, httpx.FieldError{Path: "workerId", Code: httpx.FieldRequired})
-	case len(*r.WorkerID) > maxWorkerIDLen:
-		fields = append(fields, httpx.FieldError{Path: "workerId", Code: httpx.FieldTooLong})
-	default:
-		workerID = *r.WorkerID
-	}
-
-	switch {
-	case r.Limit == nil:
-		fields = append(fields, httpx.FieldError{Path: "limit", Code: httpx.FieldRequired})
-	case *r.Limit < 1 || *r.Limit > maxClaimLimit:
-		fields = append(fields, httpx.FieldError{Path: "limit", Code: httpx.FieldOutOfRange})
-	default:
-		limit = *r.Limit
-	}
-	return workerID, limit, fields
-}
 
 type ClaimResponse struct {
 	// Empty when there is nothing to copy.
@@ -156,26 +125,6 @@ func (r FailureRequest) validate() (claimToken uuid.UUID, failure document.CopyF
 		failure.Retryable = *r.Retryable
 	}
 	return claimToken, failure, fields
-}
-
-type RenewRequest struct {
-	ClaimToken *string `json:"claimToken" format:"uuid" example:"claimToken-from-the-claim-response" validate:"required"`
-}
-
-func (r RenewRequest) validate() (claimToken uuid.UUID, fields []httpx.FieldError) {
-	claimToken, fe := httpx.ParseUUID("claimToken", r.ClaimToken)
-	if fe != nil {
-		fields = append(fields, *fe)
-	}
-	return claimToken, fields
-}
-
-type AppliedResponse struct {
-	Applied bool `json:"applied" example:"true"`
-}
-
-type RenewResponse struct {
-	ClaimUntil time.Time `json:"claimUntil" example:"2026-10-15T08:02:00Z"`
 }
 
 func toClaimedDocument(d document.ClaimedDocument) ClaimedDocument {
