@@ -292,6 +292,29 @@ The request sent to AI is not stored here: it is rebuilt on every POST from
 | `attempts_claim_check` | `claim_*` all set or all `NULL`. |
 | `attempts_error_check` | `error_code` and `error_detail` both set or both `NULL`. |
 
+### Sending tasks to AI (worker.Request)
+
+The limit of tasks at AI is `AI_MAX_IN_FLIGHT` (10). A task holds an AI place
+while its attempt is **active**: `SUBMITTING`, `UNKNOWN`, `QUEUED` or
+`PROCESSING`, i.e. from the moment we start sending until we know for sure
+AI is done with it or never had it. There is no separate slots table: the
+count comes from `attempts` (index `attempts_one_active_idx`).
+
+| Call | What happens |
+|---|---|
+| `submissions/claim` | One short transaction: `pg_advisory_xact_lock` (claims take turns for a few ms, so two claims can never both see the last free place) → count active attempts → if places are free, the oldest due `READY_TO_SUBMIT` tasks (`SKIP LOCKED`, index `queue_ready_idx`) → for each a new attempt (`attempt_no` = previous + 1) in `SUBMITTING` with a claim, task → `SUBMITTING` with `active_attempt_id`, audit. Returns the stored input and the documents' `s3_uri` in `position` order. |
+| `submissions/{attemptId}/outcome` | `ACCEPTED` → attempt `QUEUED`/`PROCESSING`, task `REMOTE_QUEUED`/`REMOTE_RUNNING`. `UNKNOWN` → attempt `UNKNOWN`, task `SUBMISSION_UNKNOWN`. Both keep the place and set `poll_at = now() + SUBMISSION_POLL_DELAY`. `REJECTED` → attempt `NOT_ACCEPTED`, task `FAILED` with the error: the place is freed. The same report repeated after a lost response returns OK and writes nothing. |
+| `submissions/{attemptId}/renew` | Extends a live `SUBMITTING` claim. |
+
+Lock order: attempt, then task, then writes (claim: advisory lock, then tasks).
+
+**Open item: recovery.** If a worker dies between claim and outcome, its
+attempt stays `SUBMITTING` after the claim expires and keeps its AI place for
+good. It must be turned into `UNKNOWN` (so polling finds out whether AI has
+it), either by a background loop in the API or as the first step of
+`submissions/claim` / `polls/claim`. Never by re-sending. Not implemented yet;
+required before test/prod.
+
 ### How the polling worker picks attempts (step 5)
 
 worker.Response calls the API; the API runs roughly:
@@ -397,6 +420,8 @@ Deliberate differences from the original spec (`Final Requirements/Integrator.Ap
 | Documents: removed `fetch_url`, `expires_at`, `content_type`, `expected_checksum`, `target_bucket/key/version_id`, `ready_at` | Link refresh is not in v1; `s3_uri` already holds bucket and key; the rest is not used. |
 | Attempts: removed `outbound_payload`, `is_active`, `remote_status`, `final_response`, `last_successful_poll_at`, `post_delivery_attempts`, `last_http_status`, `TERMINATED` state | Rebuilt from stored data, derivable from `state`, stored in `queue`, or not needed in v1. |
 | Kept `claim_owner` | Only for debugging, but nearly free and useful in incidents. |
+| No `execution_slots` table; the AI limit counts active attempts under an advisory lock | Same safety with one table fewer; the limit is config (`AI_MAX_IN_FLIGHT`), so 10 → 50 is a config change. |
+| `REJECTED` submission fails the task right away (spec: `NEEDS_ATTENTION` until step 5) | AI clearly refused it; nothing to recover. |
 | Task key is BPM's `request_guid`; `request_id` (Camunda request) is a plain, non-unique column | One Camunda request can run several operations, including the same operation more than once. BPM matches results by `requestId` (which request) + `requestGuid` (which task). |
 | Documents get our own `id`; BPM's `document_id` is unique per task only | The same file can be used by several tasks. |
 

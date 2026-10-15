@@ -31,7 +31,11 @@ type Config struct {
 	DocumentRetryMaxDelay   time.Duration `env:"DOCUMENT_RETRY_MAX_DELAY,required"`
 	// SubmissionClaimLease is how long a worker owns a POST to AI in progress without renewing.
 	SubmissionClaimLease time.Duration `env:"SUBMISSION_CLAIM_LEASE,required"`
-	Postgres             PostgresConfig
+	// AIMaxInFlight is how many tasks may be at AI at once (sent, queued or running there).
+	AIMaxInFlight int `env:"AI_MAX_IN_FLIGHT,required"`
+	// SubmissionPollDelay is when the first status check happens after a task was sent.
+	SubmissionPollDelay time.Duration `env:"SUBMISSION_POLL_DELAY,required"`
+	Postgres            PostgresConfig
 }
 
 type PostgresConfig struct {

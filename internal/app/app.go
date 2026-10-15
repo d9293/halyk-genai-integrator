@@ -49,8 +49,14 @@ func Run(ctx context.Context, cfg config.Config) error {
 		},
 	)
 
-	// Mock until the submission database logic exists.
-	submissions := submissionusecase.NewMockService(cfg.SubmissionClaimLease)
+	submissions := submissionusecase.NewUseCase(
+		postgres.NewSubmissionRepo(pool, cfg.Postgres.QueryTimeout),
+		submissionusecase.Config{
+			Lease:       cfg.SubmissionClaimLease,
+			MaxInFlight: cfg.AIMaxInFlight,
+			PollDelay:   cfg.SubmissionPollDelay,
+		},
+	)
 
 	router := httphandler.NewRouter(cfg.CallerID, cfg.SwaggerEnabled, pool.Ping,
 		taskhandler.NewHandler(tasks), documenthandler.NewHandler(documents),
@@ -68,7 +74,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 			"postgres", cfg.Postgres.Host+":"+cfg.Postgres.Port+"/"+cfg.Postgres.Database,
 			"swagger", cfg.SwaggerEnabled,
 			"operations", cfg.EnabledOperations,
-			"submissions", "mock",
+			"aiMaxInFlight", cfg.AIMaxInFlight,
 		)
 		serveErr <- server.ListenAndServe()
 	}()
