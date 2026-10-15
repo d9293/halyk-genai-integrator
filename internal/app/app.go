@@ -12,11 +12,16 @@ import (
 
 	"github.com/d9293/halyk-genai-integrator/internal/config"
 	httphandler "github.com/d9293/halyk-genai-integrator/internal/handler/http"
+	documenthandler "github.com/d9293/halyk-genai-integrator/internal/handler/http/document"
 	taskhandler "github.com/d9293/halyk-genai-integrator/internal/handler/http/task"
 	"github.com/d9293/halyk-genai-integrator/internal/repository/postgres"
 	taskrepo "github.com/d9293/halyk-genai-integrator/internal/repository/postgres/task"
+	documentusecase "github.com/d9293/halyk-genai-integrator/internal/usecase/document"
 	taskusecase "github.com/d9293/halyk-genai-integrator/internal/usecase/task"
 )
+
+// documentClaimLease is how long a worker owns a claimed document without renewing.
+const documentClaimLease = 60 * time.Second
 
 // Run wires the app and serves HTTP until ctx is cancelled.
 func Run(ctx context.Context, cfg config.Config) error {
@@ -36,7 +41,11 @@ func Run(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("create task usecase: %w", err)
 	}
 
-	router := httphandler.NewRouter(cfg.CallerID, cfg.SwaggerEnabled, pool.Ping, taskhandler.NewHandler(tasks))
+	// Mock until the document database logic exists.
+	documents := documentusecase.NewMockService(documentClaimLease)
+
+	router := httphandler.NewRouter(cfg.CallerID, cfg.SwaggerEnabled, pool.Ping,
+		taskhandler.NewHandler(tasks), documenthandler.NewHandler(documents))
 	server := &http.Server{
 		Addr:              ":" + cfg.HTTPPort,
 		Handler:           router.Engine(),
@@ -50,6 +59,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 			"postgres", cfg.Postgres.Host+":"+cfg.Postgres.Port+"/"+cfg.Postgres.Database,
 			"swagger", cfg.SwaggerEnabled,
 			"operations", cfg.EnabledOperations,
+			"documents", "mock",
 		)
 		serveErr <- server.ListenAndServe()
 	}()

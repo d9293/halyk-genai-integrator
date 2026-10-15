@@ -107,7 +107,7 @@ func (h *Handler) create(c *gin.Context) {
 //	@Router			/api/v1/tasks/{requestGuid} [get]
 func (h *Handler) get(c *gin.Context) {
 	raw := c.Param("requestGuid")
-	requestGUID, fe := parseUUID("requestGuid", &raw)
+	requestGUID, fe := httpx.ParseUUID("requestGuid", &raw)
 	if fe != nil {
 		httpx.WriteError(c, http.StatusBadRequest, httpx.CodeValidationError, messageInvalidRequest, *fe)
 		return

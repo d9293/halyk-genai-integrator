@@ -150,9 +150,449 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/internal/v1/documents/claim": {
+            "post": {
+                "description": "For worker.Request. Hands out documents that must be copied from Attstore to S3 before the task can be sent to AI. Each document is owned by the caller until claimUntil; extend it with /documents/{id}/renew while copying. Returns an empty list when there is nothing to copy.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "documents (worker)"
+                ],
+                "summary": "Claim documents to copy",
+                "parameters": [
+                    {
+                        "description": "Claim",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/document.ClaimRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/document.ClaimResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/documents/{id}/complete": {
+            "post": {
+                "description": "For worker.Request. The document was copied to S3. When it is the task's last document, the task becomes ready to be sent to AI. Repeating the call with the same data returns 200 again.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "documents (worker)"
+                ],
+                "summary": "Report a copied document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id from the claim",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Copy result",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/document.CompleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/document.AppliedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "DOCUMENT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "CLAIM_LOST: wrong or expired claim token; drop the work",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/documents/{id}/failure": {
+            "post": {
+                "description": "For worker.Request. The document could not be copied. A retryable failure is tried again later with backoff; a permanent one, or too many failures, puts the document and its task into NEEDS_ATTENTION.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "documents (worker)"
+                ],
+                "summary": "Report a failed copy",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id from the claim",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Failure",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/document.FailureRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/document.AppliedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "DOCUMENT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "CLAIM_LOST: wrong or expired claim token; drop the work",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/documents/{id}/renew": {
+            "post": {
+                "description": "For worker.Request. Heartbeat while copying: extends claimUntil. Call it about every quarter of the claim time. On 409 stop copying: the claim expired or belongs to someone else.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "documents (worker)"
+                ],
+                "summary": "Extend a document claim",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id from the claim",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Claim to extend",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/document.RenewRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/document.RenewResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "DOCUMENT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "CLAIM_LOST",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "document.AppliedResponse": {
+            "type": "object",
+            "properties": {
+                "applied": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "document.ClaimRequest": {
+            "type": "object",
+            "required": [
+                "limit",
+                "workerId"
+            ],
+            "properties": {
+                "limit": {
+                    "description": "How many documents to take at most.",
+                    "type": "integer",
+                    "maximum": 10,
+                    "minimum": 1,
+                    "example": 5
+                },
+                "workerId": {
+                    "description": "Name of the worker pod, e.g. its HOSTNAME. For diagnostics only.",
+                    "type": "string",
+                    "maxLength": 200,
+                    "example": "worker-request-7d9f8c6b5-x2kqp"
+                }
+            }
+        },
+        "document.ClaimResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "description": "Empty when there is nothing to copy.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_d9293_halyk-genai-integrator_internal_handler_http_document.ClaimedDocument"
+                    }
+                }
+            }
+        },
+        "document.CompleteRequest": {
+            "type": "object",
+            "required": [
+                "checksumSha256",
+                "claimToken",
+                "s3Uri",
+                "sizeBytes"
+            ],
+            "properties": {
+                "checksumSha256": {
+                    "type": "string",
+                    "example": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+                },
+                "claimToken": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "7b1e2c3d-0000-4000-8000-000000000001"
+                },
+                "s3Uri": {
+                    "description": "Link to the copy in S3 that AI will receive.",
+                    "type": "string",
+                    "maxLength": 8192,
+                    "example": "s3://ai-input/tasks/aaaaaaaa/0"
+                },
+                "sizeBytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "example": 123456
+                }
+            }
+        },
+        "document.FailureRequest": {
+            "type": "object",
+            "required": [
+                "claimToken",
+                "code",
+                "message",
+                "retryable"
+            ],
+            "properties": {
+                "claimToken": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "7b1e2c3d-0000-4000-8000-000000000001"
+                },
+                "code": {
+                    "description": "Short machine-readable reason.",
+                    "type": "string",
+                    "maxLength": 100,
+                    "example": "SOURCE_UNAVAILABLE"
+                },
+                "message": {
+                    "description": "Human-readable details. No personal data or signed URLs.",
+                    "type": "string",
+                    "maxLength": 2000,
+                    "example": "Attstore returned 503"
+                },
+                "retryable": {
+                    "description": "Whether trying again later may help. The API applies its own retry limit.",
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "document.RenewRequest": {
+            "type": "object",
+            "required": [
+                "claimToken"
+            ],
+            "properties": {
+                "claimToken": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "7b1e2c3d-0000-4000-8000-000000000001"
+                }
+            }
+        },
+        "document.RenewResponse": {
+            "type": "object",
+            "properties": {
+                "claimUntil": {
+                    "type": "string",
+                    "example": "2026-10-15T08:02:00Z"
+                }
+            }
+        },
+        "github_com_d9293_halyk-genai-integrator_internal_handler_http_document.ClaimedDocument": {
+            "type": "object",
+            "properties": {
+                "attstoreUrl": {
+                    "description": "Where to download the file from.",
+                    "type": "string",
+                    "example": "https://attstore.example/documents/1"
+                },
+                "claimToken": {
+                    "description": "Proof of ownership; send it back with every call about this document.",
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "7b1e2c3d-0000-4000-8000-000000000001"
+                },
+                "claimUntil": {
+                    "description": "Ownership expires at this time unless renewed.",
+                    "type": "string",
+                    "example": "2026-10-15T08:01:00Z"
+                },
+                "documentId": {
+                    "description": "BPM's ID of the file.",
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "22222222-2222-4222-8222-222222222222"
+                },
+                "id": {
+                    "description": "Our ID of the document; use it in complete, failure and renew.",
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "d0c00000-0000-4000-8000-000000000001"
+                },
+                "position": {
+                    "description": "Index of the file in the task; AI receives files in this order.",
+                    "type": "integer",
+                    "example": 0
+                },
+                "requestGuid": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                }
+            }
+        },
         "httpx.ErrorDetail": {
             "type": "object",
             "properties": {

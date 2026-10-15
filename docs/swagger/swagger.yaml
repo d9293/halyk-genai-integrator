@@ -1,5 +1,136 @@
 basePath: /
 definitions:
+  document.AppliedResponse:
+    properties:
+      applied:
+        example: true
+        type: boolean
+    type: object
+  document.ClaimRequest:
+    properties:
+      limit:
+        description: How many documents to take at most.
+        example: 5
+        maximum: 10
+        minimum: 1
+        type: integer
+      workerId:
+        description: Name of the worker pod, e.g. its HOSTNAME. For diagnostics only.
+        example: worker-request-7d9f8c6b5-x2kqp
+        maxLength: 200
+        type: string
+    required:
+    - limit
+    - workerId
+    type: object
+  document.ClaimResponse:
+    properties:
+      items:
+        description: Empty when there is nothing to copy.
+        items:
+          $ref: '#/definitions/github_com_d9293_halyk-genai-integrator_internal_handler_http_document.ClaimedDocument'
+        type: array
+    type: object
+  document.CompleteRequest:
+    properties:
+      checksumSha256:
+        example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+        type: string
+      claimToken:
+        example: 7b1e2c3d-0000-4000-8000-000000000001
+        format: uuid
+        type: string
+      s3Uri:
+        description: Link to the copy in S3 that AI will receive.
+        example: s3://ai-input/tasks/aaaaaaaa/0
+        maxLength: 8192
+        type: string
+      sizeBytes:
+        example: 123456
+        minimum: 0
+        type: integer
+    required:
+    - checksumSha256
+    - claimToken
+    - s3Uri
+    - sizeBytes
+    type: object
+  document.FailureRequest:
+    properties:
+      claimToken:
+        example: 7b1e2c3d-0000-4000-8000-000000000001
+        format: uuid
+        type: string
+      code:
+        description: Short machine-readable reason.
+        example: SOURCE_UNAVAILABLE
+        maxLength: 100
+        type: string
+      message:
+        description: Human-readable details. No personal data or signed URLs.
+        example: Attstore returned 503
+        maxLength: 2000
+        type: string
+      retryable:
+        description: Whether trying again later may help. The API applies its own
+          retry limit.
+        example: true
+        type: boolean
+    required:
+    - claimToken
+    - code
+    - message
+    - retryable
+    type: object
+  document.RenewRequest:
+    properties:
+      claimToken:
+        example: 7b1e2c3d-0000-4000-8000-000000000001
+        format: uuid
+        type: string
+    required:
+    - claimToken
+    type: object
+  document.RenewResponse:
+    properties:
+      claimUntil:
+        example: "2026-10-15T08:02:00Z"
+        type: string
+    type: object
+  github_com_d9293_halyk-genai-integrator_internal_handler_http_document.ClaimedDocument:
+    properties:
+      attstoreUrl:
+        description: Where to download the file from.
+        example: https://attstore.example/documents/1
+        type: string
+      claimToken:
+        description: Proof of ownership; send it back with every call about this document.
+        example: 7b1e2c3d-0000-4000-8000-000000000001
+        format: uuid
+        type: string
+      claimUntil:
+        description: Ownership expires at this time unless renewed.
+        example: "2026-10-15T08:01:00Z"
+        type: string
+      documentId:
+        description: BPM's ID of the file.
+        example: 22222222-2222-4222-8222-222222222222
+        format: uuid
+        type: string
+      id:
+        description: Our ID of the document; use it in complete, failure and renew.
+        example: d0c00000-0000-4000-8000-000000000001
+        format: uuid
+        type: string
+      position:
+        description: Index of the file in the task; AI receives files in this order.
+        example: 0
+        type: integer
+      requestGuid:
+        example: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+        format: uuid
+        type: string
+    type: object
   httpx.ErrorDetail:
     properties:
       code:
@@ -266,4 +397,191 @@ paths:
       summary: Get task
       tags:
       - tasks
+  /internal/v1/documents/{id}/complete:
+    post:
+      consumes:
+      - application/json
+      description: For worker.Request. The document was copied to S3. When it is the
+        task's last document, the task becomes ready to be sent to AI. Repeating the
+        call with the same data returns 200 again.
+      parameters:
+      - description: Document id from the claim
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Copy result
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/document.CompleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/document.AppliedResponse'
+        "400":
+          description: MALFORMED_JSON, VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: DOCUMENT_NOT_FOUND
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "409":
+          description: 'CLAIM_LOST: wrong or expired claim token; drop the work'
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "503":
+          description: SERVICE_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Report a copied document
+      tags:
+      - documents (worker)
+  /internal/v1/documents/{id}/failure:
+    post:
+      consumes:
+      - application/json
+      description: For worker.Request. The document could not be copied. A retryable
+        failure is tried again later with backoff; a permanent one, or too many failures,
+        puts the document and its task into NEEDS_ATTENTION.
+      parameters:
+      - description: Document id from the claim
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Failure
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/document.FailureRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/document.AppliedResponse'
+        "400":
+          description: MALFORMED_JSON, VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: DOCUMENT_NOT_FOUND
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "409":
+          description: 'CLAIM_LOST: wrong or expired claim token; drop the work'
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "503":
+          description: SERVICE_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Report a failed copy
+      tags:
+      - documents (worker)
+  /internal/v1/documents/{id}/renew:
+    post:
+      consumes:
+      - application/json
+      description: 'For worker.Request. Heartbeat while copying: extends claimUntil.
+        Call it about every quarter of the claim time. On 409 stop copying: the claim
+        expired or belongs to someone else.'
+      parameters:
+      - description: Document id from the claim
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Claim to extend
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/document.RenewRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/document.RenewResponse'
+        "400":
+          description: MALFORMED_JSON, VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: DOCUMENT_NOT_FOUND
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "409":
+          description: CLAIM_LOST
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "503":
+          description: SERVICE_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Extend a document claim
+      tags:
+      - documents (worker)
+  /internal/v1/documents/claim:
+    post:
+      consumes:
+      - application/json
+      description: For worker.Request. Hands out documents that must be copied from
+        Attstore to S3 before the task can be sent to AI. Each document is owned by
+        the caller until claimUntil; extend it with /documents/{id}/renew while copying.
+        Returns an empty list when there is nothing to copy.
+      parameters:
+      - description: Claim
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/document.ClaimRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/document.ClaimResponse'
+        "400":
+          description: MALFORMED_JSON, VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "503":
+          description: SERVICE_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Claim documents to copy
+      tags:
+      - documents (worker)
 swagger: "2.0"

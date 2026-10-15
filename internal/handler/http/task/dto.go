@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,10 +14,6 @@ import (
 )
 
 const maxURLLen = 8192
-
-// canonicalUUID accepts only the 8-4-4-4-12 form; uuid.Parse alone also
-// accepts braces, urn: prefixes and undashed hex.
-var canonicalUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // Fields are pointers so a missing field can be told apart from a zero value.
 type CreateTaskRequest struct {
@@ -47,13 +42,13 @@ func (r CreateTaskRequest) toInput(callerID string) (task.RegisterInput, []httpx
 	var fields []httpx.FieldError
 	in := task.RegisterInput{CallerID: callerID}
 
-	if id, fe := parseUUID("requestId", r.RequestID); fe != nil {
+	if id, fe := httpx.ParseUUID("requestId", r.RequestID); fe != nil {
 		fields = append(fields, *fe)
 	} else {
 		in.RequestID = id
 	}
 
-	if id, fe := parseUUID("requestGuid", r.RequestGUID); fe != nil {
+	if id, fe := httpx.ParseUUID("requestGuid", r.RequestGUID); fe != nil {
 		fields = append(fields, *fe)
 	} else {
 		in.RequestGUID = id
@@ -93,7 +88,7 @@ func (d DocumentInput) toDomain(path string) (domain.Document, []httpx.FieldErro
 	var fields []httpx.FieldError
 	var doc domain.Document
 
-	if id, fe := parseUUID(path+".documentId", d.DocumentID); fe != nil {
+	if id, fe := httpx.ParseUUID(path+".documentId", d.DocumentID); fe != nil {
 		fields = append(fields, *fe)
 	} else {
 		doc.DocumentID = id
@@ -109,16 +104,6 @@ func (d DocumentInput) toDomain(path string) (domain.Document, []httpx.FieldErro
 	}
 
 	return doc, fields
-}
-
-func parseUUID(path string, s *string) (uuid.UUID, *httpx.FieldError) {
-	if s == nil || *s == "" {
-		return uuid.Nil, &httpx.FieldError{Path: path, Code: httpx.FieldRequired}
-	}
-	if !canonicalUUID.MatchString(*s) {
-		return uuid.Nil, &httpx.FieldError{Path: path, Code: httpx.FieldInvalidFormat}
-	}
-	return uuid.MustParse(*s), nil
 }
 
 type CreateTaskResponse struct {

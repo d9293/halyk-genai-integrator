@@ -10,6 +10,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
+	"github.com/d9293/halyk-genai-integrator/internal/handler/http/document"
 	"github.com/d9293/halyk-genai-integrator/internal/handler/http/httpx"
 	"github.com/d9293/halyk-genai-integrator/internal/handler/http/task"
 )
@@ -20,16 +21,24 @@ type Router struct {
 	callerID       string
 	swaggerEnabled bool
 	// checkReady returns an error when a dependency the API needs (the database) is unreachable.
-	checkReady  func(ctx context.Context) error
-	taskHandler *task.Handler
+	checkReady      func(ctx context.Context) error
+	taskHandler     *task.Handler
+	documentHandler *document.Handler
 }
 
-func NewRouter(callerID string, swaggerEnabled bool, checkReady func(ctx context.Context) error, taskHandler *task.Handler) *Router {
+func NewRouter(
+	callerID string,
+	swaggerEnabled bool,
+	checkReady func(ctx context.Context) error,
+	taskHandler *task.Handler,
+	documentHandler *document.Handler,
+) *Router {
 	return &Router{
-		callerID:       callerID,
-		swaggerEnabled: swaggerEnabled,
-		checkReady:     checkReady,
-		taskHandler:    taskHandler,
+		callerID:        callerID,
+		swaggerEnabled:  swaggerEnabled,
+		checkReady:      checkReady,
+		taskHandler:     taskHandler,
+		documentHandler: documentHandler,
 	}
 }
 
@@ -56,8 +65,13 @@ func (router *Router) Engine() *gin.Engine {
 		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	}
 
+	// BPM-facing API.
 	api := r.Group("/api/v1", httpx.FixedCaller(router.callerID))
 	router.taskHandler.Routes(api)
+
+	// API for our own workers.
+	internal := r.Group("/internal/v1")
+	router.documentHandler.Routes(internal)
 
 	return r
 }

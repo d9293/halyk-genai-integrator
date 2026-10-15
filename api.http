@@ -48,3 +48,37 @@ Content-Type: application/json
 
 ### Readiness: 200 when the database is reachable, 503 otherwise
 GET {{host}}/health/readiness
+
+### ─── Worker API (worker.Request): documents to copy Attstore → S3. Mock for now. ───
+
+### Claim documents → 200 with up to `limit` demo documents and fresh claim tokens
+POST {{host}}/internal/v1/documents/claim
+Content-Type: application/json
+
+{"workerId":"worker-request-local","limit":2}
+
+> {% client.global.set("docId", response.body.items[0].id); client.global.set("claimToken", response.body.items[0].claimToken); %}
+
+### Renew the claim (heartbeat) → 200 with a new claimUntil
+POST {{host}}/internal/v1/documents/{{docId}}/renew
+Content-Type: application/json
+
+{"claimToken":"{{claimToken}}"}
+
+### Report a successful copy → 200 {"applied":true}
+POST {{host}}/internal/v1/documents/{{docId}}/complete
+Content-Type: application/json
+
+{"claimToken":"{{claimToken}}","s3Uri":"s3://ai-input/tasks/demo/0","sizeBytes":123456,"checksumSha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}
+
+### Report a failed copy → 200 {"applied":true}
+POST {{host}}/internal/v1/documents/{{docId}}/failure
+Content-Type: application/json
+
+{"claimToken":"{{claimToken}}","code":"SOURCE_UNAVAILABLE","message":"Attstore returned 503","retryable":true}
+
+### Wrong claim token → 409 CLAIM_LOST
+POST {{host}}/internal/v1/documents/{{docId}}/complete
+Content-Type: application/json
+
+{"claimToken":"00000000-0000-4000-8000-000000000000","s3Uri":"s3://ai-input/tasks/demo/0","sizeBytes":1,"checksumSha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}
