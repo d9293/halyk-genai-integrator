@@ -1,6 +1,4 @@
-// Package task stores BPM tasks in PostgreSQL (tables integration.queue,
-// integration.documents, integration.audit; see docs/database.md).
-package task
+package postgres
 
 import (
 	"context"
@@ -13,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/d9293/halyk-genai-integrator/internal/domain"
-	"github.com/d9293/halyk-genai-integrator/internal/repository/postgres"
 	"github.com/d9293/halyk-genai-integrator/internal/usecase/task"
 )
 
@@ -24,25 +21,27 @@ const selectTaskColumns = `
 	       result_payload, error_code, error_detail, created_at, updated_at, completed_at
 	FROM integration.queue`
 
-type Repo struct {
+// TaskRepo stores BPM tasks: tables integration.queue, integration.documents
+// and integration.audit (see docs/database.md).
+type TaskRepo struct {
 	pool         *pgxpool.Pool
 	queryTimeout time.Duration
 }
 
-func NewRepo(pool *pgxpool.Pool, queryTimeout time.Duration) *Repo {
-	return &Repo{pool: pool, queryTimeout: queryTimeout}
+func NewTaskRepo(pool *pgxpool.Pool, queryTimeout time.Duration) *TaskRepo {
+	return &TaskRepo{pool: pool, queryTimeout: queryTimeout}
 }
 
 // CreateIfAbsent registers t in one transaction: the task, its documents in
 // BPM order, and one audit row. If the requestGuid already exists it writes
 // nothing and returns the stored task.
-func (r *Repo) CreateIfAbsent(ctx context.Context, t domain.Task) (domain.Task, bool, error) {
+func (r *TaskRepo) CreateIfAbsent(ctx context.Context, t domain.Task) (domain.Task, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return domain.Task{}, false, wrap("begin transaction", err)
+		return domain.Task{}, false, wrapTask("begin transaction", err)
 	}
 	// After Commit this is a no-op.
 	defer func() { _ = tx.Rollback(ctx) }()
@@ -60,12 +59,12 @@ func (r *Repo) CreateIfAbsent(ctx context.Context, t domain.Task) (domain.Task, 
 	if errors.Is(err, pgx.ErrNoRows) {
 		existing, err := scanTask(tx.QueryRow(ctx, selectTaskColumns+` WHERE request_guid = $1`, t.RequestGUID))
 		if err != nil {
-			return domain.Task{}, false, wrap("read existing task", err)
+			return domain.Task{}, false, wrapTask("read existing task", err)
 		}
 		return existing, false, nil
 	}
 	if err != nil {
-		return domain.Task{}, false, wrap("insert task", err)
+		return domain.Task{}, false, wrapTask("insert task", err)
 	}
 
 	for position, d := range t.Documents {
@@ -74,7 +73,7 @@ func (r *Repo) CreateIfAbsent(ctx context.Context, t domain.Task) (domain.Task, 
 			VALUES ($1, $2, $3, $4, $5)`,
 			uuid.New(), t.RequestGUID, d.DocumentID, position, d.AttstoreURL)
 		if err != nil {
-			return domain.Task{}, false, wrap("insert document", err)
+			return domain.Task{}, false, wrapTask("insert document", err)
 		}
 	}
 
@@ -83,17 +82,17 @@ func (r *Repo) CreateIfAbsent(ctx context.Context, t domain.Task) (domain.Task, 
 		VALUES ($1, $2, $3, $4)`,
 		t.RequestGUID, t.CallerID, auditActionRegistered, string(t.Status))
 	if err != nil {
-		return domain.Task{}, false, wrap("insert audit", err)
+		return domain.Task{}, false, wrapTask("insert audit", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return domain.Task{}, false, wrap("commit", err)
+		return domain.Task{}, false, wrapTask("commit", err)
 	}
 	return t, true, nil
 }
 
 // Get returns the task without its documents; the API response does not include them.
-func (r *Repo) Get(ctx context.Context, callerID string, requestGUID uuid.UUID) (domain.Task, error) {
+func (r *TaskRepo) Get(ctx context.Context, callerID string, requestGUID uuid.UUID) (domain.Task, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
@@ -103,7 +102,7 @@ func (r *Repo) Get(ctx context.Context, callerID string, requestGUID uuid.UUID) 
 		return domain.Task{}, task.ErrTaskNotFound
 	}
 	if err != nil {
-		return domain.Task{}, wrap("select task", err)
+		return domain.Task{}, wrapTask("select task", err)
 	}
 	return t, nil
 }
@@ -131,10 +130,10 @@ func scanTask(row pgx.Row) (domain.Task, error) {
 	return t, nil
 }
 
-// wrap marks connection problems and timeouts as ErrStorageUnavailable, so the
+// wrapTask marks connection problems and timeouts as ErrStorageUnavailable, so the
 // API answers 503 and the client can retry.
-func wrap(step string, err error) error {
-	if postgres.IsUnavailable(err) {
+func wrapTask(step string, err error) error {
+	if IsUnavailable(err) {
 		return fmt.Errorf("%s: %w: %w", step, task.ErrStorageUnavailable, err)
 	}
 	return fmt.Errorf("%s: %w", step, err)

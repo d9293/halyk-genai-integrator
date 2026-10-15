@@ -220,7 +220,7 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "format": "uuid",
-                        "description": "Document id from the claim",
+                        "description": "id from the claim response (not bpmDocumentId)",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -292,7 +292,7 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "format": "uuid",
-                        "description": "Document id from the claim",
+                        "description": "id from the claim response (not bpmDocumentId)",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -364,7 +364,7 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "format": "uuid",
-                        "description": "Document id from the claim",
+                        "description": "id from the claim response (not bpmDocumentId)",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -480,7 +480,7 @@ const docTemplate = `{
                 "claimToken": {
                     "type": "string",
                     "format": "uuid",
-                    "example": "7b1e2c3d-0000-4000-8000-000000000001"
+                    "example": "claimToken-from-the-claim-response"
                 },
                 "s3Uri": {
                     "description": "Link to the copy in S3 that AI will receive.",
@@ -507,7 +507,7 @@ const docTemplate = `{
                 "claimToken": {
                     "type": "string",
                     "format": "uuid",
-                    "example": "7b1e2c3d-0000-4000-8000-000000000001"
+                    "example": "claimToken-from-the-claim-response"
                 },
                 "code": {
                     "description": "Short machine-readable reason.",
@@ -537,7 +537,7 @@ const docTemplate = `{
                 "claimToken": {
                     "type": "string",
                     "format": "uuid",
-                    "example": "7b1e2c3d-0000-4000-8000-000000000001"
+                    "example": "claimToken-from-the-claim-response"
                 }
             }
         },
@@ -558,6 +558,12 @@ const docTemplate = `{
                     "type": "string",
                     "example": "https://attstore.example/documents/1"
                 },
+                "bpmDocumentId": {
+                    "description": "BPM's ID of the file, for logging only. Not accepted in the URLs.",
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "22222222-2222-4222-8222-222222222222"
+                },
                 "claimToken": {
                     "description": "Proof of ownership; send it back with every call about this document.",
                     "type": "string",
@@ -569,17 +575,11 @@ const docTemplate = `{
                     "type": "string",
                     "example": "2026-10-15T08:01:00Z"
                 },
-                "documentId": {
-                    "description": "BPM's ID of the file.",
-                    "type": "string",
-                    "format": "uuid",
-                    "example": "22222222-2222-4222-8222-222222222222"
-                },
                 "id": {
-                    "description": "Our ID of the document; use it in complete, failure and renew.",
+                    "description": "Use this id in /documents/{id}/complete, /failure and /renew.",
                     "type": "string",
                     "format": "uuid",
-                    "example": "d0c00000-0000-4000-8000-000000000001"
+                    "example": "286a795c-37bf-4ea3-9c85-47c886cf3f2a"
                 },
                 "position": {
                     "description": "Index of the file in the task; AI receives files in this order.",

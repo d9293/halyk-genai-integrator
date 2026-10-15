@@ -37,7 +37,7 @@ definitions:
         example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
         type: string
       claimToken:
-        example: 7b1e2c3d-0000-4000-8000-000000000001
+        example: claimToken-from-the-claim-response
         format: uuid
         type: string
       s3Uri:
@@ -58,7 +58,7 @@ definitions:
   document.FailureRequest:
     properties:
       claimToken:
-        example: 7b1e2c3d-0000-4000-8000-000000000001
+        example: claimToken-from-the-claim-response
         format: uuid
         type: string
       code:
@@ -85,7 +85,7 @@ definitions:
   document.RenewRequest:
     properties:
       claimToken:
-        example: 7b1e2c3d-0000-4000-8000-000000000001
+        example: claimToken-from-the-claim-response
         format: uuid
         type: string
     required:
@@ -103,6 +103,11 @@ definitions:
         description: Where to download the file from.
         example: https://attstore.example/documents/1
         type: string
+      bpmDocumentId:
+        description: BPM's ID of the file, for logging only. Not accepted in the URLs.
+        example: 22222222-2222-4222-8222-222222222222
+        format: uuid
+        type: string
       claimToken:
         description: Proof of ownership; send it back with every call about this document.
         example: 7b1e2c3d-0000-4000-8000-000000000001
@@ -112,14 +117,9 @@ definitions:
         description: Ownership expires at this time unless renewed.
         example: "2026-10-15T08:01:00Z"
         type: string
-      documentId:
-        description: BPM's ID of the file.
-        example: 22222222-2222-4222-8222-222222222222
-        format: uuid
-        type: string
       id:
-        description: Our ID of the document; use it in complete, failure and renew.
-        example: d0c00000-0000-4000-8000-000000000001
+        description: Use this id in /documents/{id}/complete, /failure and /renew.
+        example: 286a795c-37bf-4ea3-9c85-47c886cf3f2a
         format: uuid
         type: string
       position:
@@ -405,7 +405,7 @@ paths:
         task's last document, the task becomes ready to be sent to AI. Repeating the
         call with the same data returns 200 again.
       parameters:
-      - description: Document id from the claim
+      - description: id from the claim response (not bpmDocumentId)
         format: uuid
         in: path
         name: id
@@ -455,7 +455,7 @@ paths:
         failure is tried again later with backoff; a permanent one, or too many failures,
         puts the document and its task into NEEDS_ATTENTION.
       parameters:
-      - description: Document id from the claim
+      - description: id from the claim response (not bpmDocumentId)
         format: uuid
         in: path
         name: id
@@ -505,7 +505,7 @@ paths:
         Call it about every quarter of the claim time. On 409 stop copying: the claim
         expired or belongs to someone else.'
       parameters:
-      - description: Document id from the claim
+      - description: id from the claim response (not bpmDocumentId)
         format: uuid
         in: path
         name: id

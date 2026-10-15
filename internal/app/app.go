@@ -15,13 +15,9 @@ import (
 	documenthandler "github.com/d9293/halyk-genai-integrator/internal/handler/http/document"
 	taskhandler "github.com/d9293/halyk-genai-integrator/internal/handler/http/task"
 	"github.com/d9293/halyk-genai-integrator/internal/repository/postgres"
-	taskrepo "github.com/d9293/halyk-genai-integrator/internal/repository/postgres/task"
 	documentusecase "github.com/d9293/halyk-genai-integrator/internal/usecase/document"
 	taskusecase "github.com/d9293/halyk-genai-integrator/internal/usecase/task"
 )
-
-// documentClaimLease is how long a worker owns a claimed document without renewing.
-const documentClaimLease = 60 * time.Second
 
 // Run wires the app and serves HTTP until ctx is cancelled.
 func Run(ctx context.Context, cfg config.Config) error {
@@ -33,7 +29,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	defer pool.Close()
 
-	tasks, err := taskusecase.NewUseCase(taskrepo.NewRepo(pool, cfg.Postgres.QueryTimeout), taskusecase.Config{
+	tasks, err := taskusecase.NewUseCase(postgres.NewTaskRepo(pool, cfg.Postgres.QueryTimeout), taskusecase.Config{
 		EnabledOperations: cfg.EnabledOperations,
 		AttstoreHosts:     cfg.AttstoreHosts,
 	})
@@ -41,8 +37,15 @@ func Run(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("create task usecase: %w", err)
 	}
 
-	// Mock until the document database logic exists.
-	documents := documentusecase.NewMockService(documentClaimLease)
+	documents := documentusecase.NewUseCase(
+		postgres.NewDocumentRepo(pool, cfg.Postgres.QueryTimeout),
+		cfg.DocumentClaimLease,
+		documentusecase.RetryPolicy{
+			MaxAttempts: cfg.DocumentMaxCopyAttempts,
+			BaseDelay:   cfg.DocumentRetryBaseDelay,
+			MaxDelay:    cfg.DocumentRetryMaxDelay,
+		},
+	)
 
 	router := httphandler.NewRouter(cfg.CallerID, cfg.SwaggerEnabled, pool.Ping,
 		taskhandler.NewHandler(tasks), documenthandler.NewHandler(documents))
@@ -59,7 +62,6 @@ func Run(ctx context.Context, cfg config.Config) error {
 			"postgres", cfg.Postgres.Host+":"+cfg.Postgres.Port+"/"+cfg.Postgres.Database,
 			"swagger", cfg.SwaggerEnabled,
 			"operations", cfg.EnabledOperations,
-			"documents", "mock",
 		)
 		serveErr <- server.ListenAndServe()
 	}()

@@ -14,6 +14,8 @@ var (
 	ErrDocumentNotFound = errors.New("document not found")
 	// ErrClaimLost: the claim token is wrong or expired; another worker may own the document now.
 	ErrClaimLost = errors.New("claim lost")
+	// ErrStorageUnavailable: the database cannot be reached; the request may be retried.
+	ErrStorageUnavailable = errors.New("storage unavailable")
 )
 
 // ClaimedDocument is a document handed to a worker, owned by it until ClaimUntil.

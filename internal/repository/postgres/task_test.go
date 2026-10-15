@@ -1,4 +1,4 @@
-package task_test
+package postgres_test
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/d9293/halyk-genai-integrator/internal/domain"
-	taskrepo "github.com/d9293/halyk-genai-integrator/internal/repository/postgres/task"
+	"github.com/d9293/halyk-genai-integrator/internal/repository/postgres"
 	"github.com/d9293/halyk-genai-integrator/internal/usecase/task"
 )
 
@@ -53,7 +53,7 @@ func newPool(t *testing.T) *pgxpool.Pool {
 
 func newUseCase(t *testing.T, pool *pgxpool.Pool) *task.UseCase {
 	t.Helper()
-	uc, err := task.NewUseCase(taskrepo.NewRepo(pool, queryTimeout), task.Config{
+	uc, err := task.NewUseCase(postgres.NewTaskRepo(pool, queryTimeout), task.Config{
 		EnabledOperations: []domain.Operation{domain.OperationSocialMedia, domain.OperationRegisterCompare},
 		AttstoreHosts:     []string{"attstore.example"},
 	})
@@ -237,7 +237,7 @@ func TestRegister_ConcurrentIdenticalRequests(t *testing.T) {
 // A failure after the task row is inserted must leave nothing behind.
 func TestCreateIfAbsent_RollsBackOnFailure(t *testing.T) {
 	pool := newPool(t)
-	repo := taskrepo.NewRepo(pool, queryTimeout)
+	repo := postgres.NewTaskRepo(pool, queryTimeout)
 
 	// The usecase rejects duplicate documents; calling the repo directly lets the
 	// second document insert violate UNIQUE (request_guid, document_id).

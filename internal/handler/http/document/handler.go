@@ -93,7 +93,7 @@ func (h *Handler) claim(c *gin.Context) {
 //	@Tags			documents (worker)
 //	@Accept			json
 //	@Produce		json
-//	@Param			id		path		string			true	"Document id from the claim"	format(uuid)
+//	@Param			id		path		string			true	"id from the claim response (not bpmDocumentId)"	format(uuid)
 //	@Param			request	body		CompleteRequest	true	"Copy result"
 //	@Success		200		{object}	AppliedResponse
 //	@Failure		400		{object}	httpx.ErrorResponse	"MALFORMED_JSON, VALIDATION_ERROR"
@@ -131,7 +131,7 @@ func (h *Handler) complete(c *gin.Context) {
 //	@Tags			documents (worker)
 //	@Accept			json
 //	@Produce		json
-//	@Param			id		path		string			true	"Document id from the claim"	format(uuid)
+//	@Param			id		path		string			true	"id from the claim response (not bpmDocumentId)"	format(uuid)
 //	@Param			request	body		FailureRequest	true	"Failure"
 //	@Success		200		{object}	AppliedResponse
 //	@Failure		400		{object}	httpx.ErrorResponse	"MALFORMED_JSON, VALIDATION_ERROR"
@@ -169,7 +169,7 @@ func (h *Handler) failure(c *gin.Context) {
 //	@Tags			documents (worker)
 //	@Accept			json
 //	@Produce		json
-//	@Param			id		path		string			true	"Document id from the claim"	format(uuid)
+//	@Param			id		path		string			true	"id from the claim response (not bpmDocumentId)"	format(uuid)
 //	@Param			request	body		RenewRequest	true	"Claim to extend"
 //	@Success		200		{object}	RenewResponse
 //	@Failure		400		{object}	httpx.ErrorResponse	"MALFORMED_JSON, VALIDATION_ERROR"
@@ -217,6 +217,9 @@ func (h *Handler) writeUsecaseError(c *gin.Context, err error) {
 		httpx.WriteError(c, http.StatusNotFound, codeDocumentNotFound, messageDocumentNotFound)
 	case errors.Is(err, document.ErrClaimLost):
 		httpx.WriteError(c, http.StatusConflict, codeClaimLost, messageClaimLost)
+	case errors.Is(err, document.ErrStorageUnavailable):
+		slog.WarnContext(c.Request.Context(), "storage unavailable", "error", err, "path", c.FullPath())
+		httpx.WriteServiceUnavailable(c)
 	default:
 		slog.ErrorContext(c.Request.Context(), "document request failed", "error", err, "path", c.FullPath())
 		httpx.WriteError(c, http.StatusInternalServerError, httpx.CodeInternalError, "Внутренняя ошибка")

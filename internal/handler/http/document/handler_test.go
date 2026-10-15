@@ -78,7 +78,7 @@ func TestClaim(t *testing.T) {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body)
 	}
 	want := `{"items":[{"id":"d0c00000-0000-4000-8000-000000000001","requestGuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",` +
-		`"documentId":"22222222-2222-4222-8222-222222222222","attstoreUrl":"https://attstore.example/1","position":1,` +
+		`"bpmDocumentId":"22222222-2222-4222-8222-222222222222","attstoreUrl":"https://attstore.example/1","position":1,` +
 		`"claimToken":"7b1e2c3d-0000-4000-8000-000000000001","claimUntil":"2026-10-15T08:01:00Z"}]}`
 	if w.Body.String() != want {
 		t.Errorf("body =\n%s\nwant\n%s", w.Body, want)
@@ -185,6 +185,7 @@ func TestUsecaseErrors(t *testing.T) {
 	}{
 		{document.ErrDocumentNotFound, http.StatusNotFound, "DOCUMENT_NOT_FOUND"},
 		{fmt.Errorf("wrapped: %w", document.ErrClaimLost), http.StatusConflict, "CLAIM_LOST"},
+		{fmt.Errorf("wrapped: %w", document.ErrStorageUnavailable), http.StatusServiceUnavailable, httpx.CodeUnavailable},
 		{fmt.Errorf("boom"), http.StatusInternalServerError, httpx.CodeInternalError},
 	}
 	for _, tt := range tests {

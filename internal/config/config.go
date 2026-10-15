@@ -21,7 +21,15 @@ type Config struct {
 	CallerID          string             `env:"CALLER_ID,required"`
 	EnabledOperations []domain.Operation `env:"ENABLED_OPERATIONS,required"`
 	AttstoreHosts     []string           `env:"ATTSTORE_ALLOWED_HOSTS,required"`
-	Postgres          PostgresConfig
+	// DocumentClaimLease is how long a worker owns a claimed document without renewing.
+	DocumentClaimLease time.Duration `env:"DOCUMENT_CLAIM_LEASE,required"`
+	// A failed copy is retried after DocumentRetryBaseDelay, doubling up to
+	// DocumentRetryMaxDelay; after DocumentMaxCopyAttempts failures the
+	// document and its task need attention.
+	DocumentMaxCopyAttempts int           `env:"DOCUMENT_MAX_COPY_ATTEMPTS,required"`
+	DocumentRetryBaseDelay  time.Duration `env:"DOCUMENT_RETRY_BASE_DELAY,required"`
+	DocumentRetryMaxDelay   time.Duration `env:"DOCUMENT_RETRY_MAX_DELAY,required"`
+	Postgres                PostgresConfig
 }
 
 type PostgresConfig struct {

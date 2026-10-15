@@ -1,5 +1,5 @@
-// Package postgres opens the PostgreSQL connection pool and classifies errors
-// shared by the repositories.
+// Package postgres stores the app's data in PostgreSQL: the connection pool,
+// error classification and the repositories (task.go, document.go).
 package postgres
 
 import (

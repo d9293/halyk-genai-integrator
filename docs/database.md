@@ -203,6 +203,38 @@ S3 API, and AI receives the S3 link.
 | `documents_ready_check` | `status = 'READY'` exactly when `s3_uri`, `size_bytes` and `checksum_sha256` are all set. |
 | `documents_claim_check` | `claim_*` all set or all `NULL`. |
 | `documents_error_check` | `error_code` and `error_detail` both set or both `NULL`. |
+| `documents_claimable_idx` | Partial index on `created_at` where `status` is `PENDING` or `COPYING`: keeps the claim query fast. |
+
+### Copying documents (worker.Request)
+
+The API never touches the files. worker.Request claims documents, copies them
+Attstore → S3, and reports back through `/internal/v1/documents/...`:
+
+```
+PENDING ──claim──▶ COPYING ──complete──▶ READY
+   ▲                  │
+   └──failure─────────┤  retryable and under the limit: retry_at = now + 5s, 10s, 20s … max 5m
+                      └──failure (permanent, or 5th failure) ──▶ NEEDS_ATTENTION (task too)
+COPYING with expired claim_until ──▶ can be claimed again by another worker
+```
+
+| Call | What happens |
+|---|---|
+| `claim` | Up to `limit` documents that are `PENDING` and due, or `COPYING` with an expired claim, of tasks still waiting for documents. Oldest first. `FOR UPDATE SKIP LOCKED`, so parallel workers never get the same document. Each gets a new `claim_token` and `claim_until = now() + DOCUMENT_CLAIM_LEASE`. The task's first claim moves it `WAITING_DOCUMENTS` → `PREPARING_DOCUMENTS`. |
+| `renew` | `claim_until = now() + lease`, only while the claim is still alive. An expired claim cannot be revived. |
+| `complete` | Document → `READY` with its S3 copy. The task's last `READY` document moves the task to `READY_TO_SUBMIT`. Repeating the call with the same data returns OK and writes nothing. |
+| `failure` | Retryable and under `DOCUMENT_MAX_COPY_ATTEMPTS`: back to `PENDING` with backoff. Otherwise document and task → `NEEDS_ATTENTION` (`error_code = DOCUMENT_COPY_FAILED`). Repeating the call gets `409 CLAIM_LOST`: the claim was already released. |
+
+Every call is one short transaction; nothing stays locked while the worker
+copies. The worker's ownership lives in the `claim_*` columns, not in a database lock.
+
+**Lock order** in every transaction: document row(s), then the task row, then
+writes. Several tasks are locked in `request_guid` order. The task is locked
+before any audit row is written, because the audit foreign key takes a shared
+lock on the task; two transactions holding that shared lock while waiting for
+the exclusive one would deadlock. Parallel completions of one task's documents
+therefore wait for each other on the task row, and exactly one of them moves
+the task to `READY_TO_SUBMIT`.
 
 ---
 
@@ -311,9 +343,11 @@ Example history of one `REGISTER_COMPARE` task:
 | actor | action | about | old → new | detail |
 |---|---|---|---|---|
 | `bpm` | `TASK_REGISTERED` | | → `WAITING_DOCUMENTS` | |
+| `worker-request-x2kqp` | `DOCUMENTS_PREPARING` | | `WAITING_DOCUMENTS` → `PREPARING_DOCUMENTS` | |
+| `worker-request-x2kqp` | `DOCUMENT_COPY_FAILED` | document 1 | `COPYING` → `PENDING` | `SOURCE_UNAVAILABLE` |
 | `worker-request-x2kqp` | `DOCUMENT_READY` | document 0 | `COPYING` → `READY` | |
 | `worker-request-x2kqp` | `DOCUMENT_READY` | document 1 | `COPYING` → `READY` | |
-| `system` | `TASK_READY` | | `PREPARING_DOCUMENTS` → `READY_TO_SUBMIT` | |
+| `worker-request-x2kqp` | `TASK_READY` | | `PREPARING_DOCUMENTS` → `READY_TO_SUBMIT` | |
 | `worker-request-x2kqp` | `ATTEMPT_ACCEPTED` | attempt 1 | `SUBMITTING` → `QUEUED` | |
 | `worker-response-m8zt1` | `ATTEMPT_LOST` | attempt 1 | `PROCESSING` → `LOST` | `AI_TASK_NOT_FOUND` |
 | `worker-response-m8zt1` | `TASK_SUCCEEDED` | attempt 2 | `REMOTE_RUNNING` → `SUCCEEDED` | |

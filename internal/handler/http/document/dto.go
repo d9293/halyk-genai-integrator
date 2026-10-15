@@ -56,11 +56,11 @@ type ClaimResponse struct {
 }
 
 type ClaimedDocument struct {
-	// Our ID of the document; use it in complete, failure and renew.
-	ID          uuid.UUID `json:"id" format:"uuid" example:"d0c00000-0000-4000-8000-000000000001"`
+	// Use this id in /documents/{id}/complete, /failure and /renew.
+	ID          uuid.UUID `json:"id" format:"uuid" example:"286a795c-37bf-4ea3-9c85-47c886cf3f2a"`
 	RequestGUID uuid.UUID `json:"requestGuid" format:"uuid" example:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"`
-	// BPM's ID of the file.
-	DocumentID uuid.UUID `json:"documentId" format:"uuid" example:"22222222-2222-4222-8222-222222222222"`
+	// BPM's ID of the file, for logging only. Not accepted in the URLs.
+	BPMDocumentID uuid.UUID `json:"bpmDocumentId" format:"uuid" example:"22222222-2222-4222-8222-222222222222"`
 	// Where to download the file from.
 	AttstoreURL string `json:"attstoreUrl" example:"https://attstore.example/documents/1"`
 	// Index of the file in the task; AI receives files in this order.
@@ -72,7 +72,7 @@ type ClaimedDocument struct {
 }
 
 type CompleteRequest struct {
-	ClaimToken *string `json:"claimToken" format:"uuid" example:"7b1e2c3d-0000-4000-8000-000000000001" validate:"required"`
+	ClaimToken *string `json:"claimToken" format:"uuid" example:"claimToken-from-the-claim-response" validate:"required"`
 	// Link to the copy in S3 that AI will receive.
 	S3URI          *string `json:"s3Uri" maxLength:"8192" example:"s3://ai-input/tasks/aaaaaaaa/0" validate:"required"`
 	SizeBytes      *int64  `json:"sizeBytes" minimum:"0" example:"123456" validate:"required"`
@@ -117,7 +117,7 @@ func (r CompleteRequest) validate() (claimToken uuid.UUID, result document.CopyR
 }
 
 type FailureRequest struct {
-	ClaimToken *string `json:"claimToken" format:"uuid" example:"7b1e2c3d-0000-4000-8000-000000000001" validate:"required"`
+	ClaimToken *string `json:"claimToken" format:"uuid" example:"claimToken-from-the-claim-response" validate:"required"`
 	// Short machine-readable reason.
 	Code *string `json:"code" maxLength:"100" example:"SOURCE_UNAVAILABLE" validate:"required"`
 	// Human-readable details. No personal data or signed URLs.
@@ -159,7 +159,7 @@ func (r FailureRequest) validate() (claimToken uuid.UUID, failure document.CopyF
 }
 
 type RenewRequest struct {
-	ClaimToken *string `json:"claimToken" format:"uuid" example:"7b1e2c3d-0000-4000-8000-000000000001" validate:"required"`
+	ClaimToken *string `json:"claimToken" format:"uuid" example:"claimToken-from-the-claim-response" validate:"required"`
 }
 
 func (r RenewRequest) validate() (claimToken uuid.UUID, fields []httpx.FieldError) {
@@ -180,12 +180,12 @@ type RenewResponse struct {
 
 func toClaimedDocument(d document.ClaimedDocument) ClaimedDocument {
 	return ClaimedDocument{
-		ID:          d.ID,
-		RequestGUID: d.RequestGUID,
-		DocumentID:  d.DocumentID,
-		AttstoreURL: d.AttstoreURL,
-		Position:    d.Position,
-		ClaimToken:  d.ClaimToken,
-		ClaimUntil:  d.ClaimUntil.UTC(),
+		ID:            d.ID,
+		RequestGUID:   d.RequestGUID,
+		BPMDocumentID: d.DocumentID,
+		AttstoreURL:   d.AttstoreURL,
+		Position:      d.Position,
+		ClaimToken:    d.ClaimToken,
+		ClaimUntil:    d.ClaimUntil.UTC(),
 	}
 }
