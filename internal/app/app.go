@@ -14,11 +14,13 @@ import (
 	httphandler "github.com/d9293/halyk-genai-integrator/internal/handler/http"
 	documenthandler "github.com/d9293/halyk-genai-integrator/internal/handler/http/document"
 	pollhandler "github.com/d9293/halyk-genai-integrator/internal/handler/http/poll"
+	resulthandler "github.com/d9293/halyk-genai-integrator/internal/handler/http/result"
 	submissionhandler "github.com/d9293/halyk-genai-integrator/internal/handler/http/submission"
 	taskhandler "github.com/d9293/halyk-genai-integrator/internal/handler/http/task"
 	"github.com/d9293/halyk-genai-integrator/internal/repository/postgres"
 	documentusecase "github.com/d9293/halyk-genai-integrator/internal/usecase/document"
 	pollusecase "github.com/d9293/halyk-genai-integrator/internal/usecase/poll"
+	resultusecase "github.com/d9293/halyk-genai-integrator/internal/usecase/result"
 	submissionusecase "github.com/d9293/halyk-genai-integrator/internal/usecase/submission"
 	taskusecase "github.com/d9293/halyk-genai-integrator/internal/usecase/task"
 )
@@ -77,9 +79,13 @@ func Run(ctx context.Context, cfg config.Config) error {
 		},
 	)
 
+	// Mock until the result database logic exists.
+	results := resultusecase.NewMockService(cfg.ResultClaimLease, cfg.KafkaResultTopic)
+
 	router := httphandler.NewRouter(cfg.CallerID, cfg.SwaggerEnabled, pool.Ping,
 		taskhandler.NewHandler(tasks), documenthandler.NewHandler(documents),
-		submissionhandler.NewHandler(submissions), pollhandler.NewHandler(polls))
+		submissionhandler.NewHandler(submissions), pollhandler.NewHandler(polls),
+		resulthandler.NewHandler(results))
 	server := &http.Server{
 		Addr:              ":" + cfg.HTTPPort,
 		Handler:           router.Engine(),
@@ -94,6 +100,8 @@ func Run(ctx context.Context, cfg config.Config) error {
 			"swagger", cfg.SwaggerEnabled,
 			"operations", cfg.EnabledOperations,
 			"aiMaxInFlight", cfg.AIMaxInFlight,
+			"resultTopic", cfg.KafkaResultTopic,
+			"results", "mock",
 		)
 		serveErr <- server.ListenAndServe()
 	}()

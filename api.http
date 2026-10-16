@@ -156,3 +156,25 @@ POST {{host}}/internal/v1/polls/{{pollAttemptId}}/observation
 Content-Type: application/json
 
 {"claimToken":"{{pollToken}}","outcome":"TECHNICAL_ERROR","failure":{"code":"AI_TIMEOUT","message":"No response from AI within 10s"}}
+
+### ─── Worker API (worker.Response): deliver final results to BPM via Kafka. Mock for now. ───
+
+### Claim results to deliver → 200 with topic, key and the ready message
+POST {{host}}/internal/v1/results/claim
+Content-Type: application/json
+
+{"workerId":"worker-response-local","limit":5}
+
+> {% client.global.set("resultGuid", response.body.items[0].requestGuid); client.global.set("resultToken", response.body.items[0].claimToken); %}
+
+### Kafka confirmed (broker ACK) → 200
+POST {{host}}/internal/v1/results/{{resultGuid}}/published
+Content-Type: application/json
+
+{"claimToken":"{{resultToken}}"}
+
+### Kafka did not accept it → 200; tried again later, never dropped
+POST {{host}}/internal/v1/results/{{resultGuid}}/failure
+Content-Type: application/json
+
+{"claimToken":"{{resultToken}}","failure":{"code":"KAFKA_UNAVAILABLE","message":"No broker ACK within 10s"}}

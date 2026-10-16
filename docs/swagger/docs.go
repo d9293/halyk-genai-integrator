@@ -543,6 +543,202 @@ const docTemplate = `{
                 }
             }
         },
+        "/internal/v1/results/claim": {
+            "post": {
+                "description": "For worker.Response. Hands out final task results (SUCCEEDED / FAILED) that BPM has not received yet. Publish each message unchanged to the given topic with the given key, wait for the broker ACK, then report published or failure. Returns an empty list when nothing is waiting.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "results (worker)"
+                ],
+                "summary": "Claim results to deliver",
+                "parameters": [
+                    {
+                        "description": "Claim",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ClaimRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/result.ClaimResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/results/{requestGuid}/failure": {
+            "post": {
+                "description": "For worker.Response. The result is tried again later with backoff; it is never dropped.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "results (worker)"
+                ],
+                "summary": "Report a result Kafka did not accept",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "requestGuid from the claim response",
+                        "name": "requestGuid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Failure",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/result.FailureRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.AppliedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "RESULT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "CLAIM_LOST",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/results/{requestGuid}/published": {
+            "post": {
+                "description": "For worker.Response. Call only after the broker ACK. The result is not sent again. Repeating the call returns 200 again.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "results (worker)"
+                ],
+                "summary": "Report a result delivered to Kafka",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "requestGuid from the claim response",
+                        "name": "requestGuid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Claim token",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/result.PublishedRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.AppliedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "RESULT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "CLAIM_LOST: wrong or expired claim token; the result may be published again, BPM deduplicates by requestGuid",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/internal/v1/submissions/claim": {
             "post": {
                 "description": "For worker.Request. Hands out tasks that are ready to be sent to AI, each as a new attempt that already holds one of the limited AI places. Send it to AI with attemptId as task_id, then report the outcome. Returns an empty list when nothing is ready or all AI places are taken; ask again later.",
@@ -906,6 +1102,107 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_d9293_halyk-genai-integrator_internal_handler_http_result.ClaimedResult": {
+            "type": "object",
+            "properties": {
+                "claimToken": {
+                    "description": "Proof of ownership; send it back with published or failure.",
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "7b1e2c3d-0000-4000-8000-000000000001"
+                },
+                "claimUntil": {
+                    "description": "Report the outcome before this time.",
+                    "type": "string",
+                    "example": "2026-10-16T10:00:30Z"
+                },
+                "message": {
+                    "description": "Publish exactly this as the message value, unchanged.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_d9293_halyk-genai-integrator_internal_handler_http_result.Message"
+                        }
+                    ]
+                },
+                "messageKey": {
+                    "description": "Kafka message key: the Camunda requestId.",
+                    "type": "string",
+                    "example": "11111111-1111-4111-8111-111111111111"
+                },
+                "requestGuid": {
+                    "description": "Use in /results/{requestGuid}/published and /failure.",
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                },
+                "topic": {
+                    "description": "Kafka topic to publish to.",
+                    "type": "string",
+                    "example": "integrator.task-results.v1"
+                }
+            }
+        },
+        "github_com_d9293_halyk-genai-integrator_internal_handler_http_result.Message": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "description": "Why the task failed; null for SUCCEEDED.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/result.Failure"
+                        }
+                    ],
+                    "x-nullable": true
+                },
+                "eventType": {
+                    "type": "string",
+                    "enum": [
+                        "TASK_COMPLETED"
+                    ],
+                    "example": "TASK_COMPLETED"
+                },
+                "occurredAt": {
+                    "description": "When the task finished, not when the message was sent.",
+                    "type": "string",
+                    "example": "2026-10-16T10:00:00Z"
+                },
+                "operation": {
+                    "type": "string",
+                    "enum": [
+                        "SOCIAL_MEDIA",
+                        "REGISTER_COMPARE"
+                    ],
+                    "example": "REGISTER_COMPARE"
+                },
+                "requestGuid": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                },
+                "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "11111111-1111-4111-8111-111111111111"
+                },
+                "result": {
+                    "description": "AI's result JSON as AI returned it; null for FAILED.",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "schemaVersion": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "SUCCEEDED",
+                        "FAILED"
+                    ],
+                    "example": "SUCCEEDED"
+                }
+            }
+        },
         "github_com_d9293_halyk-genai-integrator_internal_handler_http_submission.ClaimedSubmission": {
             "type": "object",
             "properties": {
@@ -1147,6 +1444,66 @@ const docTemplate = `{
                 "result": {
                     "description": "AI's result JSON as AI returned it. Required for SUCCEEDED, not allowed otherwise.",
                     "type": "object"
+                }
+            }
+        },
+        "result.ClaimResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "description": "Empty when no result is waiting to be delivered.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_d9293_halyk-genai-integrator_internal_handler_http_result.ClaimedResult"
+                    }
+                }
+            }
+        },
+        "result.Failure": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "AI_TASK_LOST_RETRIES_EXHAUSTED"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "AI lost the task 4 times"
+                }
+            }
+        },
+        "result.FailureRequest": {
+            "type": "object",
+            "required": [
+                "claimToken",
+                "failure"
+            ],
+            "properties": {
+                "claimToken": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "claimToken-from-the-claim-response"
+                },
+                "failure": {
+                    "description": "Why Kafka did not accept the message.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/httpx.FailureInput"
+                        }
+                    ]
+                }
+            }
+        },
+        "result.PublishedRequest": {
+            "type": "object",
+            "required": [
+                "claimToken"
+            ],
+            "properties": {
+                "claimToken": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "claimToken-from-the-claim-response"
                 }
             }
         },

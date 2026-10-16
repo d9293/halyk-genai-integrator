@@ -131,6 +131,79 @@ definitions:
         format: uuid
         type: string
     type: object
+  github_com_d9293_halyk-genai-integrator_internal_handler_http_result.ClaimedResult:
+    properties:
+      claimToken:
+        description: Proof of ownership; send it back with published or failure.
+        example: 7b1e2c3d-0000-4000-8000-000000000001
+        format: uuid
+        type: string
+      claimUntil:
+        description: Report the outcome before this time.
+        example: "2026-10-16T10:00:30Z"
+        type: string
+      message:
+        allOf:
+        - $ref: '#/definitions/github_com_d9293_halyk-genai-integrator_internal_handler_http_result.Message'
+        description: Publish exactly this as the message value, unchanged.
+      messageKey:
+        description: 'Kafka message key: the Camunda requestId.'
+        example: 11111111-1111-4111-8111-111111111111
+        type: string
+      requestGuid:
+        description: Use in /results/{requestGuid}/published and /failure.
+        example: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+        format: uuid
+        type: string
+      topic:
+        description: Kafka topic to publish to.
+        example: integrator.task-results.v1
+        type: string
+    type: object
+  github_com_d9293_halyk-genai-integrator_internal_handler_http_result.Message:
+    properties:
+      error:
+        allOf:
+        - $ref: '#/definitions/result.Failure'
+        description: Why the task failed; null for SUCCEEDED.
+        x-nullable: true
+      eventType:
+        enum:
+        - TASK_COMPLETED
+        example: TASK_COMPLETED
+        type: string
+      occurredAt:
+        description: When the task finished, not when the message was sent.
+        example: "2026-10-16T10:00:00Z"
+        type: string
+      operation:
+        enum:
+        - SOCIAL_MEDIA
+        - REGISTER_COMPARE
+        example: REGISTER_COMPARE
+        type: string
+      requestGuid:
+        example: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+        format: uuid
+        type: string
+      requestId:
+        example: 11111111-1111-4111-8111-111111111111
+        format: uuid
+        type: string
+      result:
+        description: AI's result JSON as AI returned it; null for FAILED.
+        type: object
+        x-nullable: true
+      schemaVersion:
+        example: 1
+        type: integer
+      status:
+        enum:
+        - SUCCEEDED
+        - FAILED
+        example: SUCCEEDED
+        type: string
+    type: object
   github_com_d9293_halyk-genai-integrator_internal_handler_http_submission.ClaimedSubmission:
     properties:
       attemptId:
@@ -319,6 +392,46 @@ definitions:
     required:
     - claimToken
     - outcome
+    type: object
+  result.ClaimResponse:
+    properties:
+      items:
+        description: Empty when no result is waiting to be delivered.
+        items:
+          $ref: '#/definitions/github_com_d9293_halyk-genai-integrator_internal_handler_http_result.ClaimedResult'
+        type: array
+    type: object
+  result.Failure:
+    properties:
+      code:
+        example: AI_TASK_LOST_RETRIES_EXHAUSTED
+        type: string
+      message:
+        example: AI lost the task 4 times
+        type: string
+    type: object
+  result.FailureRequest:
+    properties:
+      claimToken:
+        example: claimToken-from-the-claim-response
+        format: uuid
+        type: string
+      failure:
+        allOf:
+        - $ref: '#/definitions/httpx.FailureInput'
+        description: Why Kafka did not accept the message.
+    required:
+    - claimToken
+    - failure
+    type: object
+  result.PublishedRequest:
+    properties:
+      claimToken:
+        example: claimToken-from-the-claim-response
+        format: uuid
+        type: string
+    required:
+    - claimToken
     type: object
   submission.ClaimResponse:
     properties:
@@ -869,6 +982,142 @@ paths:
       summary: Claim status checks
       tags:
       - polls (worker)
+  /internal/v1/results/{requestGuid}/failure:
+    post:
+      consumes:
+      - application/json
+      description: For worker.Response. The result is tried again later with backoff;
+        it is never dropped.
+      parameters:
+      - description: requestGuid from the claim response
+        format: uuid
+        in: path
+        name: requestGuid
+        required: true
+        type: string
+      - description: Failure
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/result.FailureRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpx.AppliedResponse'
+        "400":
+          description: MALFORMED_JSON, VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: RESULT_NOT_FOUND
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "409":
+          description: CLAIM_LOST
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "503":
+          description: SERVICE_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Report a result Kafka did not accept
+      tags:
+      - results (worker)
+  /internal/v1/results/{requestGuid}/published:
+    post:
+      consumes:
+      - application/json
+      description: For worker.Response. Call only after the broker ACK. The result
+        is not sent again. Repeating the call returns 200 again.
+      parameters:
+      - description: requestGuid from the claim response
+        format: uuid
+        in: path
+        name: requestGuid
+        required: true
+        type: string
+      - description: Claim token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/result.PublishedRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpx.AppliedResponse'
+        "400":
+          description: MALFORMED_JSON, VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: RESULT_NOT_FOUND
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "409":
+          description: 'CLAIM_LOST: wrong or expired claim token; the result may be
+            published again, BPM deduplicates by requestGuid'
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "503":
+          description: SERVICE_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Report a result delivered to Kafka
+      tags:
+      - results (worker)
+  /internal/v1/results/claim:
+    post:
+      consumes:
+      - application/json
+      description: For worker.Response. Hands out final task results (SUCCEEDED /
+        FAILED) that BPM has not received yet. Publish each message unchanged to the
+        given topic with the given key, wait for the broker ACK, then report published
+        or failure. Returns an empty list when nothing is waiting.
+      parameters:
+      - description: Claim
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpx.ClaimRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/result.ClaimResponse'
+        "400":
+          description: MALFORMED_JSON, VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "503":
+          description: SERVICE_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Claim results to deliver
+      tags:
+      - results (worker)
   /internal/v1/submissions/{attemptId}/outcome:
     post:
       consumes:
