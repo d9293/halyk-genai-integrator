@@ -9,6 +9,7 @@ Plain SQL to create the schema and tables by hand (or hand to a DBA). Run in ord
 | 3 | `04_documents_claim_index.sql` | Index for claiming documents to copy. |
 | 4 | `05_queue_ready_index.sql` | Index for picking the next task to send to AI. |
 | 5 | `06_attempts_poll_index.sql` | Index for picking attempts due for a status check. |
+| 6 | `07_queue_publish.sql` | Kafka delivery columns on `queue`; documentation comments on every `queue` column. |
 
 Local infra (database `postgres`, user `admin`, as in `dev.env`): `make db-init`, or
 
@@ -18,6 +19,7 @@ docker exec -i infra-postgres psql -v ON_ERROR_STOP=1 -U admin -d postgres < scr
 docker exec -i infra-postgres psql -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/04_documents_claim_index.sql
 docker exec -i infra-postgres psql -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/05_queue_ready_index.sql
 docker exec -i infra-postgres psql -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/06_attempts_poll_index.sql
+docker exec -i infra-postgres psql -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/07_queue_publish.sql
 ```
 
 To start over (deletes all tasks):

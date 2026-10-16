@@ -13,13 +13,15 @@ All tables live in the schema **`integration`**.
 
 | Table | One row per | Purpose | Created in |
 |---|---|---|---|
-| [`queue`](#integrationqueue) | BPM task | Overall task state, submit schedule, final result | Step 2 |
+| [`queue`](#integrationqueue) | Task (`requestGuid`) | What BPM asked, overall state, final result, delivery of the result to BPM via Kafka | Step 2 (Kafka delivery columns: step 6) |
 | [`documents`](#integrationdocuments) | Input file of a task | Copy Attstore → S3 before the task can be sent to AI | Step 2 |
 | [`audit`](#integrationaudit) | State change | Append-only history of tasks, documents and attempts | Step 2 |
 | [`attempts`](#integrationattempts) | POST to the AI team | One send to AI and everything learned by polling it | Step 4 |
 
-Not designed yet (later steps): execution slots (the limit of 10), outbox
-(Kafka delivery), command idempotency for workers, global submission switch.
+Deliberately not separate tables: the AI limit is counted from active
+`attempts`; Kafka delivery lives on `queue`; repeated worker calls are
+recognized from the data (see [Decisions](#decisions)). Not designed yet: a
+global "pause submissions" switch, for the admin panel later.
 
 ```
 BPM POST /api/v1/tasks
@@ -96,60 +98,140 @@ never overwrite newer state.
 
 ## `integration.queue`
 
-One row per BPM task. Holds the original request (never changed), the current
-state, when the next POST to AI may happen, and the final result.
+One row per task (`requestGuid`). It holds what BPM asked for (never changed),
+where the task is, its sending to AI, its final outcome, and the delivery of
+that outcome to BPM through Kafka. One task produces exactly one Kafka message,
+so the delivery state lives on the task row itself (see [Decisions](#decisions)).
+
+### Columns
 
 | Column | Type | Null | Default / check | Purpose | At registration |
 |---|---|---|---|---|---|
-| `request_guid` | `uuid` | NOT NULL | **PK** | BPM's unique ID for this task. Idempotency key: one `requestGuid` = one task; a retry reuses it. Never sent to AI. | BPM `requestGuid` |
-| `request_id` | `uuid` | NOT NULL | index | The Camunda request the task belongs to. **Not unique**: one Camunda request can have many tasks, even several with the same operation. Returned to BPM with every result. | BPM `requestId` |
-| `caller_id` | `text` | NOT NULL | | Who registered the task. Fixed from config while auth is off; later from the authenticated principal. GET only returns tasks of the same caller. | `bpm` |
-| `operation` | `text` | NOT NULL | | Operation code, e.g. `SOCIAL_MEDIA`, `REGISTER_COMPARE`. Selects validation and the AI endpoint. | from request |
-| `request_payload` | `jsonb` | NOT NULL | | The operation input, **normalized** (fixed key order, defaults filled in). Never changes. Used to build the request to AI on every POST. | normalized `input` |
-| `request_hash` | `text` | NOT NULL | | SHA-256 of requestId + operation + input + documents. Detects BPM reusing a `requestGuid` with different data (→ `409`). | computed |
-| `status` | `text` | NOT NULL | `CHECK`, see below | Where the task is overall. | `READY_TO_SUBMIT` or `WAITING_DOCUMENTS` |
-| `active_attempt_id` | `uuid` | NULL | FK → `attempts` (step 4) | The current POST to AI. `NULL` before the first POST. | `NULL` |
-| `retry_at` | `timestamptz` | NULL | | When the next POST to AI may happen. `NULL` = now. Set after a rejected POST, to delay the retry. | `NULL` |
-| `retry_count` | `int` | NOT NULL | `0`, `CHECK (>= 0)` | Re-sends after AI **lost** the task (3× NOT_FOUND). Max 3, then the task is `FAILED`. Other failures do not count. | `0` |
-| `result_payload` | `jsonb` | NULL | | AI's result JSON, **as AI returned it**. Includes report links (Word/Excel). | `NULL` |
-| `error_code` | `text` | NULL | | Why the task is `FAILED` or `NEEDS_ATTENTION`, e.g. `AI_TASK_LOST_RETRIES_EXHAUSTED`. | `NULL` |
-| `error_detail` | `text` | NULL | | Human-readable explanation for `error_code`. | `NULL` |
+| **Identity** | | | | | |
+| `request_guid` | `uuid` | NOT NULL | **PK** | BPM's unique ID of this task. Idempotency key: one `requestGuid` = one task; BPM reuses it only when retrying the *same* registration. Also identifies the task's Kafka message: BPM deduplicates by it. Never sent to AI. | BPM `requestGuid` |
+| `request_id` | `uuid` | NOT NULL | indexed | The Camunda request the task belongs to. **Not unique**: one Camunda request can have many tasks, even several with the same operation. Kafka message key. | BPM `requestId` |
+| `caller_id` | `text` | NOT NULL | | Who registered the task. Fixed from config while auth is off; later the authenticated principal. GET only returns the caller's own tasks. | `bpm` |
+| **What was asked** (never changes) | | | | | |
+| `operation` | `text` | NOT NULL | | Operation code: `SOCIAL_MEDIA`, `REGISTER_COMPARE`. Selects validation and the AI endpoint. | from request |
+| `request_payload` | `jsonb` | NOT NULL | | The operation input, **normalized** (fixed key order, defaults filled in). Sent to AI on every POST. | normalized `input` |
+| `request_hash` | `text` | NOT NULL | | SHA-256 of requestId + operation + input + documents. A repeated registration with the same `requestGuid` but a different hash is rejected (`409`). | computed |
+| **State** | | | | | |
+| `status` | `text` | NOT NULL | `CHECK`, see [Task statuses](#task-statuses) | Where the task is overall. | `READY_TO_SUBMIT` or `WAITING_DOCUMENTS` |
+| `active_attempt_id` | `uuid` | NULL | FK → `attempts` | The current, or last, POST to AI. `NULL` before the first send. Kept after the task ends, for diagnostics. | `NULL` |
+| **Sending to AI** | | | | | |
+| `retry_at` | `timestamptz` | NULL | | Don't send to AI before this time. `NULL` = as soon as an AI place is free. Not set by the current flows; reserved for delaying a re-send. | `NULL` |
+| `retry_count` | `int` | NOT NULL | `0`, `CHECK (>= 0)` | How many times the task was re-sent because AI **lost** it (`NOT_FOUND` rule). After `MAX_RESUBMISSIONS` the task fails. Other failures do not count. | `0` |
+| **Outcome** | | | | | |
+| `result_payload` | `jsonb` | NULL | | AI's result JSON **as AI returned it**, report links included. Only for `SUCCEEDED`. (`jsonb` may reorder keys and whitespace; the content is identical.) | `NULL` |
+| `error_code` | `text` | NULL | | Why the task is `FAILED` or `NEEDS_ATTENTION`, e.g. `AI_TASK_LOST_RETRIES_EXHAUSTED`, `RESULT_TOO_LARGE`, `DOCUMENT_COPY_FAILED`, or AI's own code. | `NULL` |
+| `error_detail` | `text` | NULL | | Human-readable explanation of `error_code`. No personal data. | `NULL` |
+| `completed_at` | `timestamptz` | NULL | | When the task became `SUCCEEDED` or `FAILED`. Sent as `occurredAt` in the Kafka message. | `NULL` |
+| **Delivery to BPM via Kafka** | | | | | |
+| `published_at` | `timestamptz` | NULL | | When Kafka confirmed (broker ACK) the task's result message. `NULL` = still to deliver. It does not mean BPM has processed it. | `NULL` |
+| `publish_retry_at` | `timestamptz` | NULL | | After a failed publish: don't try again before this time. `NULL` = now. | `NULL` |
+| `publish_retry_count` | `int` | NOT NULL | `0`, `CHECK (>= 0)` | Failed publish tries; drives the backoff. The message is never dropped, however high it gets. | `0` |
+| `publish_claim_token` | `uuid` | NULL | | Proof of ownership while a worker publishes; see [Claims](#claims). | `NULL` |
+| `publish_claim_until` | `timestamptz` | NULL | | When that ownership expires. | `NULL` |
+| `publish_claim_owner` | `text` | NULL | | Which pod is publishing. Debugging only. | `NULL` |
+| `publish_error_code` | `text` | NULL | | Last publish error, e.g. `KAFKA_UNAVAILABLE`. | `NULL` |
+| `publish_error_detail` | `text` | NULL | | Its details. | `NULL` |
+| **Timestamps** | | | | | |
 | `created_at` | `timestamptz` | NOT NULL | `now()` | Registration time. | `now()` |
 | `updated_at` | `timestamptz` | NOT NULL | `now()` | Last change of the row. | `now()` |
-| `completed_at` | `timestamptz` | NULL | | When the task reached `SUCCEEDED` or `FAILED`. | `NULL` |
+
+The prefix `publish_` keeps delivering to BPM (Kafka) apart from sending to AI
+(`retry_*`, `error_*` without prefix).
 
 ### Task statuses
 
-| Status | Meaning |
-|---|---|
-| `WAITING_DOCUMENTS` | Registered; files not yet picked up for copying. |
-| `PREPARING_DOCUMENTS` | A worker is copying files Attstore → S3. |
-| `READY_TO_SUBMIT` | Ready to POST to AI; waits for a free slot (max 10 at AI) and for `retry_at`. |
-| `SUBMITTING` | A POST to AI is in progress. |
-| `SUBMISSION_UNKNOWN` | The POST timed out or its response was lost; AI may or may not have the task. Resolved by polling, **never** by blindly POSTing again. |
-| `REMOTE_QUEUED` | AI accepted the task and it waits in AI's own queue. |
-| `REMOTE_RUNNING` | AI is processing the task. |
-| `NEEDS_ATTENTION` | No safe automatic way forward; a person has to look. Not terminal. |
-| `SUCCEEDED` | Terminal. `result_payload` is set. |
-| `FAILED` | Terminal. `error_code` / `error_detail` are set. |
+```
+                ┌── operation without files ──────────────────────────┐
+registration ───┤                                                     ▼
+                └── WAITING_DOCUMENTS → PREPARING_DOCUMENTS ──▶ READY_TO_SUBMIT ◀── AI lost it (re-send)
+                                                                      │
+                                                                  SUBMITTING
+                                       ┌──────────────────────────────┼──────────────┐
+                                       ▼                              ▼              ▼
+                              SUBMISSION_UNKNOWN ───▶ REMOTE_QUEUED ─▶ REMOTE_RUNNING   FAILED (rejected)
+                                                            │              │
+                                                            └──────┬───────┘
+                                                                   ▼
+                                                     SUCCEEDED / FAILED / NEEDS_ATTENTION
+```
 
-### Constraints
+| Status | Meaning | Set by | Next | Holds an AI place | Kafka message |
+|---|---|---|---|---|---|
+| `WAITING_DOCUMENTS` | Registered; its files are waiting to be copied Attstore → S3. | registration (operation with files) | `PREPARING_DOCUMENTS` | no | no |
+| `PREPARING_DOCUMENTS` | worker.Request is copying the files; some may be done. | first `documents/claim` | `READY_TO_SUBMIT`, `NEEDS_ATTENTION` | no | no |
+| `READY_TO_SUBMIT` | Everything prepared; waits for a free AI place (`AI_MAX_IN_FLIGHT`). | registration (no files), last `documents/complete`, lost-task re-send | `SUBMITTING` | no | no |
+| `SUBMITTING` | worker.Request is sending the POST to AI right now (owns the attempt). | `submissions/claim` | `REMOTE_QUEUED`, `REMOTE_RUNNING`, `SUBMISSION_UNKNOWN`, `FAILED` | **yes** | no |
+| `SUBMISSION_UNKNOWN` | The POST got no reliable answer (timeout, lost response, sender died). AI may or may not have it; polling finds out. **Never** re-sent blindly. | outcome `UNKNOWN`, recovery | `REMOTE_QUEUED`, `REMOTE_RUNNING`, `SUCCEEDED`, `FAILED`, `READY_TO_SUBMIT` (lost) | **yes** | no |
+| `REMOTE_QUEUED` | AI confirmed it has the task; waiting in AI's own queue. | outcome `ACCEPTED`, poll `QUEUED` | `REMOTE_RUNNING`, `SUCCEEDED`, `FAILED`, `READY_TO_SUBMIT` (lost) | **yes** | no |
+| `REMOTE_RUNNING` | AI is working on it. | outcome `ACCEPTED` (processing), poll `PROCESSING` | `SUCCEEDED`, `FAILED`, `NEEDS_ATTENTION`, `READY_TO_SUBMIT` (lost) | **yes** | no |
+| `NEEDS_ATTENTION` | No safe automatic way forward; a person has to look (`error_code` says why: a document could not be copied, the result was too large). Not final. | `documents/failure` (out of retries), poll `SUCCEEDED` with an oversized result | manual action (admin panel, later) | no | no (visible via GET) |
+| `SUCCEEDED` | **Final.** AI finished; `result_payload` holds its result. | poll `SUCCEEDED` | — | no | **yes** |
+| `FAILED` | **Final.** `error_code` / `error_detail` say why: AI's business error, AI rejected the task, or AI lost it too often. | poll `FAILED`, outcome `REJECTED`, lost-task rule | — | no | **yes** |
 
-| Constraint | Rule |
+"Holds an AI place" follows the task's attempt: the place is counted from
+active attempts (see [`attempts`](#integrationattempts)), not from this status.
+
+### Constraints and indexes
+
+| Name | Rule |
 |---|---|
 | `queue_status_check` | `status` is one of the statuses above. |
 | `queue_retry_count_check` | `retry_count >= 0`. |
 | `queue_completed_at_check` | `completed_at` is set exactly when `status` is `SUCCEEDED` or `FAILED`. |
 | `queue_error_check` | `error_code` and `error_detail` both set or both `NULL`. |
-| `queue_active_attempt_fk` (step 4) | `(request_guid, active_attempt_id)` → `attempts (request_guid, attempt_id)`. Uses both columns so a task can never point to another task's attempt. |
+| `queue_active_attempt_fk` | `(request_guid, active_attempt_id)` → `attempts (request_guid, attempt_id)`: a task can only point to its own attempt. |
+| `queue_published_check` | `published_at` can only be set on a `SUCCEEDED` or `FAILED` task. |
+| `queue_publish_retry_count_check` | `publish_retry_count >= 0`. |
+| `queue_publish_claim_check` | The three `publish_claim_*` columns are all set or all `NULL`. |
+| `queue_publish_error_check` | `publish_error_code` and `publish_error_detail` both set or both `NULL`. |
+| `queue_request_id_idx` | Index on `request_id`. |
+| `queue_ready_idx` | Partial index on `created_at` where `status = 'READY_TO_SUBMIT'`: next task to send. |
+| `queue_unpublished_idx` | Partial index on `completed_at` where the task is final and not yet published: next message to deliver. |
 
-### How the submit worker picks tasks (step 4)
+### How workers pick tasks
 
 ```sql
-WHERE status = 'READY_TO_SUBMIT'
-  AND (retry_at IS NULL OR retry_at <= now())
-ORDER BY created_at          -- oldest first
+-- submissions/claim: the next task to send to AI (under the AI limit)
+WHERE status = 'READY_TO_SUBMIT' AND (retry_at IS NULL OR retry_at <= now())
+ORDER BY created_at
+
+-- outbox/claim: the next result to deliver to BPM
+WHERE status IN ('SUCCEEDED', 'FAILED') AND published_at IS NULL
+  AND (publish_retry_at IS NULL OR publish_retry_at <= now())
+  AND (publish_claim_until IS NULL OR publish_claim_until < now())
+ORDER BY completed_at
 ```
+
+### Kafka message (v1)
+
+One message per task when it becomes `SUCCEEDED` or `FAILED`, built from the
+row. Key: `request_id`. Delivery is at-least-once: BPM may receive a message
+twice and must ignore repeats by `requestGuid`.
+
+```json
+{
+  "schemaVersion": 1,
+  "eventType": "TASK_COMPLETED",
+  "occurredAt": "2026-10-16T10:00:00Z",
+  "requestId": "11111111-1111-4111-8111-111111111111",
+  "requestGuid": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "operation": "REGISTER_COMPARE",
+  "status": "SUCCEEDED",
+  "result": { "summary": { "counts": { "both": 12 } }, "report_url": "https://…" },
+  "error": null
+}
+```
+
+| Field | From |
+|---|---|
+| `occurredAt` | `completed_at`: when the task finished, not when the message was sent |
+| `requestId`, `requestGuid`, `operation`, `status` | the same columns |
+| `result` | `result_payload` (`null` for `FAILED`) |
+| `error` | `{code, message}` from `error_code` / `error_detail` (`null` for `SUCCEEDED`) |
 
 ---
 
@@ -442,6 +524,8 @@ Deliberate differences from the original spec (`Final Requirements/Integrator.Ap
 | `REJECTED` submission fails the task right away (spec: `NEEDS_ATTENTION` until step 5) | AI clearly refused it; nothing to recover. |
 | Task key is BPM's `request_guid`; `request_id` (Camunda request) is a plain, non-unique column | One Camunda request can run several operations, including the same operation more than once. BPM matches results by `requestId` (which request) + `requestGuid` (which task). |
 | Documents get our own `id`; BPM's `document_id` is unique per task only | The same file can be used by several tasks. |
+| A BPM retry is a **new `requestGuid`** (a new task), never a reset of the old one | No reset logic, no "did the file change?" checks, and one task always means exactly one final outcome. Our own re-send after AI lost a task stays within the same task and reuses its S3 copies. |
+| Kafka delivery state lives on `queue` (`published_at`, `publish_*`), no separate outbox table, no `event_id` | One task = exactly one Kafka message, so the task row is the outbox row and `requestGuid` identifies the message. Finishing a task already creates its "message to send". A separate table would only be needed for several messages per task. |
 
 ## API impact of these decisions
 
