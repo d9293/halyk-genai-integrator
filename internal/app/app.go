@@ -60,8 +60,22 @@ func Run(ctx context.Context, cfg config.Config) error {
 		},
 	)
 
-	// Mock until the poll database logic exists.
-	polls := pollusecase.NewMockService(cfg.PollClaimLease)
+	polls := pollusecase.NewUseCase(
+		postgres.NewPollRepo(pool, cfg.Postgres.QueryTimeout),
+		pollusecase.Config{
+			Lease:    cfg.PollClaimLease,
+			Interval: cfg.PollInterval,
+			Jitter:   cfg.PollIntervalJitter,
+			Rules: pollusecase.Rules{
+				NotFoundDelay:    cfg.PollNotFoundDelay,
+				ErrorDelay:       cfg.PollErrorDelay,
+				LostThreshold:    cfg.LostTaskNotFoundThreshold,
+				LostMinWindow:    cfg.LostTaskMinWindow,
+				MaxResubmissions: cfg.MaxResubmissions,
+				ResultMaxBytes:   cfg.ResultMaxBytes,
+			},
+		},
+	)
 
 	router := httphandler.NewRouter(cfg.CallerID, cfg.SwaggerEnabled, pool.Ping,
 		taskhandler.NewHandler(tasks), documenthandler.NewHandler(documents),
@@ -80,7 +94,6 @@ func Run(ctx context.Context, cfg config.Config) error {
 			"swagger", cfg.SwaggerEnabled,
 			"operations", cfg.EnabledOperations,
 			"aiMaxInFlight", cfg.AIMaxInFlight,
-			"polls", "mock",
 		)
 		serveErr <- server.ListenAndServe()
 	}()

@@ -60,3 +60,21 @@ type Observation struct {
 	// Failure explains FAILED and TECHNICAL_ERROR.
 	Failure *domain.Failure
 }
+
+// Rules decide what an observation does beyond moving the attempt along.
+type Rules struct {
+	// NextPoll is when to check again after QUEUED/PROCESSING.
+	NextPoll time.Duration
+	// NotFoundDelay is when to check again after NOT_FOUND.
+	NotFoundDelay time.Duration
+	// ErrorDelay is when to check again after TECHNICAL_ERROR.
+	ErrorDelay time.Duration
+	// The task is lost after LostThreshold NOT_FOUND in a row, the first at
+	// least LostMinWindow ago. It is then sent again unless it already was
+	// MaxResubmissions times.
+	LostThreshold    int
+	LostMinWindow    time.Duration
+	MaxResubmissions int
+	// ResultMaxBytes caps the stored result; a bigger one needs attention.
+	ResultMaxBytes int
+}

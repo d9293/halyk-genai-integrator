@@ -308,30 +308,48 @@ count comes from `attempts` (index `attempts_one_active_idx`).
 
 Lock order: attempt, then task, then writes (claim: advisory lock, then tasks).
 
-**Open item: recovery.** If a worker dies between claim and outcome, its
-attempt stays `SUBMITTING` after the claim expires and keeps its AI place for
-good. It must be turned into `UNKNOWN` (so polling finds out whether AI has
-it), either by a background loop in the API or as the first step of
-`submissions/claim` / `polls/claim`. Never by re-sending. Not implemented yet;
-required before test/prod.
+**Recovery:** if a worker dies between claim and outcome, its attempt stays
+`SUBMITTING`. The first step of every `polls/claim` turns such attempts with
+an expired claim into `UNKNOWN`, so polling finds out whether AI has them.
+They are never re-sent blindly.
 
-### How the polling worker picks attempts (step 5)
+### Checking task status (worker.Response)
 
-worker.Response calls the API; the API runs roughly:
+worker.Response asks the API which attempts are due for a status check,
+makes one GET to AI per attempt, and reports the answer.
 
-```sql
-SELECT a.attempt_id, a.request_guid, q.operation
-FROM integration.attempts a
-JOIN integration.queue q USING (request_guid)
-WHERE a.state IN ('UNKNOWN', 'QUEUED', 'PROCESSING')
-  AND a.poll_at <= now()
-  AND (a.claim_until IS NULL OR a.claim_until < now())
-ORDER BY a.poll_at
-LIMIT $1
-FOR UPDATE OF a SKIP LOCKED
-```
+| Call | What happens |
+|---|---|
+| `polls/claim` | First **recovery**: attempts still `SUBMITTING` after their claim expired (the sender died) → `UNKNOWN`, due now, task `SUBMISSION_UNKNOWN`, audit `SUBMISSION_RECOVERED` by `system`. They keep their AI place and are never re-sent blindly. Then up to `limit` attempts in `UNKNOWN`/`QUEUED`/`PROCESSING` with `poll_at <= now()` and no live claim (`SKIP LOCKED`, index `attempts_pollable_idx`), each claimed for `POLL_CLAIM_LEASE` (one GET). `SUBMITTING` with a live claim is never touched. |
+| `polls/{attemptId}/observation` | Applies AI's answer, see below, and releases the claim. |
 
-Only attempts that are due and not claimed are returned, in small batches.
+| AI answered | Attempt | Task | AI place | Next check |
+|---|---|---|---|---|
+| `QUEUED` / `PROCESSING` | same (a late `QUEUED` after `PROCESSING` keeps `PROCESSING`); NOT_FOUND streak reset | `REMOTE_QUEUED` / `REMOTE_RUNNING` | kept | `POLL_INTERVAL` ± jitter |
+| `SUCCEEDED` | `DONE` | `SUCCEEDED`, `result_payload` = AI's JSON as-is | freed | none |
+| `SUCCEEDED`, result > `RESULT_MAX_BYTES` | `DONE` | `NEEDS_ATTENTION`, `RESULT_TOO_LARGE`, no result stored | freed | none |
+| `FAILED` | `ERROR` | `FAILED` with AI's error | freed | none |
+| `NOT_FOUND` | `not_found_count + 1` | unchanged | kept | `POLL_NOT_FOUND_DELAY` |
+| `NOT_FOUND`, the `LOST_TASK_NOT_FOUND_THRESHOLD`th in a row and the first ≥ `LOST_TASK_MIN_WINDOW` ago | `LOST` | `READY_TO_SUBMIT`, `retry_count + 1` (re-sent as a new attempt), or after `MAX_RESUBMISSIONS` re-sends `FAILED` `AI_TASK_LOST_RETRIES_EXHAUSTED` | freed | none |
+| `TECHNICAL_ERROR` | unchanged; error saved; NOT_FOUND streak neither extended nor reset | unchanged | kept | `POLL_ERROR_DELAY` |
+
+`NOT_FOUND` means AI's confirmed "task not found" (`404` with
+`{"detail": "Задача не найдена: <task_id>"}`). A `404` from a proxy or wrong
+route is a `TECHNICAL_ERROR` and never leads to a re-send.
+
+**Repeats** (option B): an observation without a live claim that reports the
+state the attempt is already in (`QUEUED`, `PROCESSING`, `SUCCEEDED` → `DONE`,
+`FAILED` → `ERROR`) returns OK and writes nothing. Anything else without a live
+claim is `409`; in particular a repeated `NOT_FOUND` or `TECHNICAL_ERROR` is
+never applied twice.
+
+Lock order: attempt, then task, then writes. Concurrent copies of one
+observation apply exactly once.
+
+**Open item: no-progress safety net.** An attempt AI never finishes (or that
+only gets `TECHNICAL_ERROR`) is checked forever and keeps its place. The spec's
+safety net, `NEEDS_ATTENTION` after e.g. 2 hours without progress while
+polling continues, is not implemented yet.
 
 ---
 

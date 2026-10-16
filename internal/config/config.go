@@ -37,6 +37,21 @@ type Config struct {
 	SubmissionPollDelay time.Duration `env:"SUBMISSION_POLL_DELAY,required"`
 	// PollClaimLease is how long worker.Response owns one status check (a single GET to AI).
 	PollClaimLease time.Duration `env:"POLL_CLAIM_LEASE,required"`
+	// Next status check after QUEUED/PROCESSING: PollInterval ± PollIntervalJitter.
+	PollInterval       time.Duration `env:"POLL_INTERVAL,required"`
+	PollIntervalJitter time.Duration `env:"POLL_INTERVAL_JITTER,required"`
+	// Next status check after AI said it does not know the task.
+	PollNotFoundDelay time.Duration `env:"POLL_NOT_FOUND_DELAY,required"`
+	// Next status check after a timeout or other technical error.
+	PollErrorDelay time.Duration `env:"POLL_ERROR_DELAY,required"`
+	// A task is lost after LostTaskNotFoundThreshold NOT_FOUND answers in a
+	// row spread over at least LostTaskMinWindow; it is then sent again, at
+	// most MaxResubmissions times.
+	LostTaskNotFoundThreshold int           `env:"LOST_TASK_NOT_FOUND_THRESHOLD,required"`
+	LostTaskMinWindow         time.Duration `env:"LOST_TASK_MIN_WINDOW,required"`
+	MaxResubmissions          int           `env:"MAX_RESUBMISSIONS,required"`
+	// ResultMaxBytes caps the stored AI result; a bigger one needs attention.
+	ResultMaxBytes int `env:"RESULT_MAX_BYTES,required"`
 	Postgres       PostgresConfig
 }
 
