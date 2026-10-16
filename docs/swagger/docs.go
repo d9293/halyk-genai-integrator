@@ -419,6 +419,130 @@ const docTemplate = `{
                 }
             }
         },
+        "/internal/v1/polls/claim": {
+            "post": {
+                "description": "For worker.Response. Hands out tasks at AI whose status is due to be checked. For each, make one GET to AI with attemptId as task_id and report the answer before claimUntil. Returns an empty list when no check is due; ask again later.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "polls (worker)"
+                ],
+                "summary": "Claim status checks",
+                "parameters": [
+                    {
+                        "description": "Claim",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ClaimRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/poll.ClaimResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/polls/{attemptId}/observation": {
+            "post": {
+                "description": "For worker.Response. QUEUED / PROCESSING: checked again later. SUCCEEDED: the result is stored and the task succeeds. FAILED: the task fails. Both free the AI place. NOT_FOUND: AI does not know the task; several in a row mean AI lost it and the API sends it again. TECHNICAL_ERROR: checked again later, never treated as NOT_FOUND. Repeating QUEUED/PROCESSING/SUCCEEDED/FAILED after a lost response returns 200 again; repeating NOT_FOUND or TECHNICAL_ERROR returns 409.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "polls (worker)"
+                ],
+                "summary": "Report what AI answered",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "attemptId from the claim response",
+                        "name": "attemptId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Observation",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/poll.ObservationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.AppliedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "MALFORMED_JSON, VALIDATION_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "ATTEMPT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "CLAIM_LOST: wrong or expired claim token, or already applied",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "SERVICE_UNAVAILABLE",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/internal/v1/submissions/claim": {
             "post": {
                 "description": "For worker.Request. Hands out tasks that are ready to be sent to AI, each as a new attempt that already holds one of the limited AI places. Send it to AI with attemptId as task_id, then report the outcome. Returns an empty list when nothing is ready or all AI places are taken; ask again later.",
@@ -736,6 +860,52 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_d9293_halyk-genai-integrator_internal_handler_http_poll.ClaimedPoll": {
+            "type": "object",
+            "properties": {
+                "attemptId": {
+                    "description": "Use in /polls/{attemptId}/observation. It is the task_id AI knows the task by.",
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "a77e0000-0000-4000-8000-000000000002"
+                },
+                "attemptNo": {
+                    "description": "1 for the first send of the task, 2 for a re-send after AI lost it, ...",
+                    "type": "integer",
+                    "example": 1
+                },
+                "claimToken": {
+                    "description": "Proof of ownership; send it back with the observation.",
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "7b1e2c3d-0000-4000-8000-000000000001"
+                },
+                "claimUntil": {
+                    "description": "Report the observation before this time.",
+                    "type": "string",
+                    "example": "2026-10-16T08:00:30Z"
+                },
+                "operation": {
+                    "description": "Tells which AI status endpoint to call.",
+                    "type": "string",
+                    "enum": [
+                        "SOCIAL_MEDIA",
+                        "REGISTER_COMPARE"
+                    ],
+                    "example": "REGISTER_COMPARE"
+                },
+                "requestGuid": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+                },
+                "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "11111111-1111-4111-8111-111111111111"
+                }
+            }
+        },
         "github_com_d9293_halyk-genai-integrator_internal_handler_http_submission.ClaimedSubmission": {
             "type": "object",
             "properties": {
@@ -873,6 +1043,27 @@ const docTemplate = `{
                 }
             }
         },
+        "httpx.FailureInput": {
+            "type": "object",
+            "required": [
+                "code",
+                "message"
+            ],
+            "properties": {
+                "code": {
+                    "description": "Short machine-readable reason.",
+                    "type": "string",
+                    "maxLength": 100,
+                    "example": "AI_TIMEOUT"
+                },
+                "message": {
+                    "description": "Human-readable details. No personal data, raw HTML or signed URLs.",
+                    "type": "string",
+                    "maxLength": 2000,
+                    "example": "No response from AI within 30s"
+                }
+            }
+        },
         "httpx.FieldError": {
             "type": "object",
             "properties": {
@@ -908,6 +1099,57 @@ const docTemplate = `{
                 }
             }
         },
+        "poll.ClaimResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "description": "Empty when no status check is due.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_d9293_halyk-genai-integrator_internal_handler_http_poll.ClaimedPoll"
+                    }
+                }
+            }
+        },
+        "poll.ObservationRequest": {
+            "type": "object",
+            "required": [
+                "claimToken",
+                "outcome"
+            ],
+            "properties": {
+                "claimToken": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "claimToken-from-the-claim-response"
+                },
+                "failure": {
+                    "description": "Required for FAILED and TECHNICAL_ERROR, not allowed otherwise.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/httpx.FailureInput"
+                        }
+                    ]
+                },
+                "outcome": {
+                    "description": "What AI answered:\nQUEUED / PROCESSING: AI has the task and is not done.\nSUCCEEDED: AI finished; put AI's result JSON in result.\nFAILED: AI finished with a business error; describe it in failure.\nNOT_FOUND: AI confirmed it does not know this task.\nTECHNICAL_ERROR: no usable answer (timeout, 5xx, proxy 404); describe it in failure.",
+                    "type": "string",
+                    "enum": [
+                        "QUEUED",
+                        "PROCESSING",
+                        "SUCCEEDED",
+                        "FAILED",
+                        "NOT_FOUND",
+                        "TECHNICAL_ERROR"
+                    ],
+                    "example": "SUCCEEDED"
+                },
+                "result": {
+                    "description": "AI's result JSON as AI returned it. Required for SUCCEEDED, not allowed otherwise.",
+                    "type": "object"
+                }
+            }
+        },
         "submission.ClaimResponse": {
             "type": "object",
             "properties": {
@@ -917,25 +1159,6 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_d9293_halyk-genai-integrator_internal_handler_http_submission.ClaimedSubmission"
                     }
-                }
-            }
-        },
-        "submission.FailureInput": {
-            "type": "object",
-            "required": [
-                "code",
-                "message"
-            ],
-            "properties": {
-                "code": {
-                    "type": "string",
-                    "maxLength": 100,
-                    "example": "AI_TIMEOUT"
-                },
-                "message": {
-                    "type": "string",
-                    "maxLength": 2000,
-                    "example": "No response from AI within 30s"
                 }
             }
         },
@@ -955,7 +1178,7 @@ const docTemplate = `{
                     "description": "Required for REJECTED, optional for UNKNOWN, not allowed for ACCEPTED.",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/submission.FailureInput"
+                            "$ref": "#/definitions/httpx.FailureInput"
                         }
                     ]
                 },

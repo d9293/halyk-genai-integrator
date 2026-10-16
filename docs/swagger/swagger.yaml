@@ -93,6 +93,44 @@ definitions:
         format: uuid
         type: string
     type: object
+  github_com_d9293_halyk-genai-integrator_internal_handler_http_poll.ClaimedPoll:
+    properties:
+      attemptId:
+        description: Use in /polls/{attemptId}/observation. It is the task_id AI knows
+          the task by.
+        example: a77e0000-0000-4000-8000-000000000002
+        format: uuid
+        type: string
+      attemptNo:
+        description: 1 for the first send of the task, 2 for a re-send after AI lost
+          it, ...
+        example: 1
+        type: integer
+      claimToken:
+        description: Proof of ownership; send it back with the observation.
+        example: 7b1e2c3d-0000-4000-8000-000000000001
+        format: uuid
+        type: string
+      claimUntil:
+        description: Report the observation before this time.
+        example: "2026-10-16T08:00:30Z"
+        type: string
+      operation:
+        description: Tells which AI status endpoint to call.
+        enum:
+        - SOCIAL_MEDIA
+        - REGISTER_COMPARE
+        example: REGISTER_COMPARE
+        type: string
+      requestGuid:
+        example: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+        format: uuid
+        type: string
+      requestId:
+        example: 11111111-1111-4111-8111-111111111111
+        format: uuid
+        type: string
+    type: object
   github_com_d9293_halyk-genai-integrator_internal_handler_http_submission.ClaimedSubmission:
     properties:
       attemptId:
@@ -198,6 +236,23 @@ definitions:
         type: string
         x-nullable: true
     type: object
+  httpx.FailureInput:
+    properties:
+      code:
+        description: Short machine-readable reason.
+        example: AI_TIMEOUT
+        maxLength: 100
+        type: string
+      message:
+        description: Human-readable details. No personal data, raw HTML or signed
+          URLs.
+        example: No response from AI within 30s
+        maxLength: 2000
+        type: string
+    required:
+    - code
+    - message
+    type: object
   httpx.FieldError:
     properties:
       code:
@@ -222,6 +277,49 @@ definitions:
         example: "2026-10-15T08:02:00Z"
         type: string
     type: object
+  poll.ClaimResponse:
+    properties:
+      items:
+        description: Empty when no status check is due.
+        items:
+          $ref: '#/definitions/github_com_d9293_halyk-genai-integrator_internal_handler_http_poll.ClaimedPoll'
+        type: array
+    type: object
+  poll.ObservationRequest:
+    properties:
+      claimToken:
+        example: claimToken-from-the-claim-response
+        format: uuid
+        type: string
+      failure:
+        allOf:
+        - $ref: '#/definitions/httpx.FailureInput'
+        description: Required for FAILED and TECHNICAL_ERROR, not allowed otherwise.
+      outcome:
+        description: |-
+          What AI answered:
+          QUEUED / PROCESSING: AI has the task and is not done.
+          SUCCEEDED: AI finished; put AI's result JSON in result.
+          FAILED: AI finished with a business error; describe it in failure.
+          NOT_FOUND: AI confirmed it does not know this task.
+          TECHNICAL_ERROR: no usable answer (timeout, 5xx, proxy 404); describe it in failure.
+        enum:
+        - QUEUED
+        - PROCESSING
+        - SUCCEEDED
+        - FAILED
+        - NOT_FOUND
+        - TECHNICAL_ERROR
+        example: SUCCEEDED
+        type: string
+      result:
+        description: AI's result JSON as AI returned it. Required for SUCCEEDED, not
+          allowed otherwise.
+        type: object
+    required:
+    - claimToken
+    - outcome
+    type: object
   submission.ClaimResponse:
     properties:
       items:
@@ -229,20 +327,6 @@ definitions:
         items:
           $ref: '#/definitions/github_com_d9293_halyk-genai-integrator_internal_handler_http_submission.ClaimedSubmission'
         type: array
-    type: object
-  submission.FailureInput:
-    properties:
-      code:
-        example: AI_TIMEOUT
-        maxLength: 100
-        type: string
-      message:
-        example: No response from AI within 30s
-        maxLength: 2000
-        type: string
-    required:
-    - code
-    - message
     type: object
   submission.OutcomeRequest:
     properties:
@@ -252,7 +336,7 @@ definitions:
         type: string
       failure:
         allOf:
-        - $ref: '#/definitions/submission.FailureInput'
+        - $ref: '#/definitions/httpx.FailureInput'
         description: Required for REJECTED, optional for UNKNOWN, not allowed for
           ACCEPTED.
       outcome:
@@ -694,6 +778,97 @@ paths:
       summary: Claim documents to copy
       tags:
       - documents (worker)
+  /internal/v1/polls/{attemptId}/observation:
+    post:
+      consumes:
+      - application/json
+      description: 'For worker.Response. QUEUED / PROCESSING: checked again later.
+        SUCCEEDED: the result is stored and the task succeeds. FAILED: the task fails.
+        Both free the AI place. NOT_FOUND: AI does not know the task; several in a
+        row mean AI lost it and the API sends it again. TECHNICAL_ERROR: checked again
+        later, never treated as NOT_FOUND. Repeating QUEUED/PROCESSING/SUCCEEDED/FAILED
+        after a lost response returns 200 again; repeating NOT_FOUND or TECHNICAL_ERROR
+        returns 409.'
+      parameters:
+      - description: attemptId from the claim response
+        format: uuid
+        in: path
+        name: attemptId
+        required: true
+        type: string
+      - description: Observation
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/poll.ObservationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpx.AppliedResponse'
+        "400":
+          description: MALFORMED_JSON, VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: ATTEMPT_NOT_FOUND
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "409":
+          description: 'CLAIM_LOST: wrong or expired claim token, or already applied'
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "503":
+          description: SERVICE_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Report what AI answered
+      tags:
+      - polls (worker)
+  /internal/v1/polls/claim:
+    post:
+      consumes:
+      - application/json
+      description: For worker.Response. Hands out tasks at AI whose status is due
+        to be checked. For each, make one GET to AI with attemptId as task_id and
+        report the answer before claimUntil. Returns an empty list when no check is
+        due; ask again later.
+      parameters:
+      - description: Claim
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpx.ClaimRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/poll.ClaimResponse'
+        "400":
+          description: MALFORMED_JSON, VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: INTERNAL_ERROR
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "503":
+          description: SERVICE_UNAVAILABLE
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Claim status checks
+      tags:
+      - polls (worker)
   /internal/v1/submissions/{attemptId}/outcome:
     post:
       consumes:

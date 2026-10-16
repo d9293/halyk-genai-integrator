@@ -2,19 +2,12 @@ package submission
 
 import (
 	"encoding/json"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/d9293/halyk-genai-integrator/internal/domain"
 	"github.com/d9293/halyk-genai-integrator/internal/handler/http/httpx"
 	"github.com/d9293/halyk-genai-integrator/internal/usecase/submission"
-)
-
-const (
-	maxFailureCodeLen = 100
-	maxMessageLen     = 2000
 )
 
 type ClaimResponse struct {
@@ -55,12 +48,7 @@ type OutcomeRequest struct {
 	// Only for ACCEPTED: AI's status of the task. Defaults to QUEUED.
 	RemoteStatus *string `json:"remoteStatus" enums:"QUEUED,PROCESSING" example:"QUEUED"`
 	// Required for REJECTED, optional for UNKNOWN, not allowed for ACCEPTED.
-	Failure *FailureInput `json:"failure"`
-}
-
-type FailureInput struct {
-	Code    *string `json:"code" maxLength:"100" example:"AI_TIMEOUT" validate:"required"`
-	Message *string `json:"message" maxLength:"2000" example:"No response from AI within 30s" validate:"required"`
+	Failure *httpx.FailureInput `json:"failure"`
 }
 
 func (r OutcomeRequest) validate() (claimToken uuid.UUID, report submission.Report, fields []httpx.FieldError) {
@@ -93,7 +81,7 @@ func (r OutcomeRequest) validate() (claimToken uuid.UUID, report submission.Repo
 		}
 		switch {
 		case r.Failure != nil:
-			failure, failureFields := r.Failure.toDomain()
+			failure, failureFields := r.Failure.ToDomain("failure")
 			fields = append(fields, failureFields...)
 			report.Failure = failure
 		case report.Outcome == submission.OutcomeRejected:
@@ -103,30 +91,6 @@ func (r OutcomeRequest) validate() (claimToken uuid.UUID, report submission.Repo
 		fields = append(fields, httpx.FieldError{Path: "outcome", Code: httpx.FieldInvalidFormat})
 	}
 	return claimToken, report, fields
-}
-
-func (f FailureInput) toDomain() (*domain.Failure, []httpx.FieldError) {
-	var fields []httpx.FieldError
-	var failure domain.Failure
-
-	switch {
-	case f.Code == nil || strings.TrimSpace(*f.Code) == "":
-		fields = append(fields, httpx.FieldError{Path: "failure.code", Code: httpx.FieldRequired})
-	case len(*f.Code) > maxFailureCodeLen:
-		fields = append(fields, httpx.FieldError{Path: "failure.code", Code: httpx.FieldTooLong})
-	default:
-		failure.Code = *f.Code
-	}
-
-	switch {
-	case f.Message == nil || strings.TrimSpace(*f.Message) == "":
-		fields = append(fields, httpx.FieldError{Path: "failure.message", Code: httpx.FieldRequired})
-	case len([]rune(*f.Message)) > maxMessageLen:
-		fields = append(fields, httpx.FieldError{Path: "failure.message", Code: httpx.FieldTooLong})
-	default:
-		failure.Message = *f.Message
-	}
-	return &failure, fields
 }
 
 func toClaimedSubmission(s submission.ClaimedSubmission) ClaimedSubmission {

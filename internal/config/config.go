@@ -35,7 +35,9 @@ type Config struct {
 	AIMaxInFlight int `env:"AI_MAX_IN_FLIGHT,required"`
 	// SubmissionPollDelay is when the first status check happens after a task was sent.
 	SubmissionPollDelay time.Duration `env:"SUBMISSION_POLL_DELAY,required"`
-	Postgres            PostgresConfig
+	// PollClaimLease is how long worker.Response owns one status check (a single GET to AI).
+	PollClaimLease time.Duration `env:"POLL_CLAIM_LEASE,required"`
+	Postgres       PostgresConfig
 }
 
 type PostgresConfig struct {

@@ -116,3 +116,43 @@ POST {{host}}/internal/v1/submissions/{{attemptId}}/outcome
 Content-Type: application/json
 
 {"claimToken":"{{submissionToken}}","outcome":"REJECTED","failure":{"code":"INVALID_INPUT","message":"AI rejected the files"}}
+
+### ─── Worker API (worker.Response): check the status of tasks at AI. Mock for now. ───
+
+### Claim status checks → 200 with attempts to check (attemptId = AI task_id)
+POST {{host}}/internal/v1/polls/claim
+Content-Type: application/json
+
+{"workerId":"worker-response-local","limit":5}
+
+> {% client.global.set("pollAttemptId", response.body.items[0].attemptId); client.global.set("pollToken", response.body.items[0].claimToken); %}
+
+### AI: still working → 200
+POST {{host}}/internal/v1/polls/{{pollAttemptId}}/observation
+Content-Type: application/json
+
+{"claimToken":"{{pollToken}}","outcome":"PROCESSING"}
+
+### AI: done, with its result JSON → 200
+POST {{host}}/internal/v1/polls/{{pollAttemptId}}/observation
+Content-Type: application/json
+
+{"claimToken":"{{pollToken}}","outcome":"SUCCEEDED","result":{"summary":{"counts":{"both":12,"review":1}},"extraction_complete":true,"report_url":"https://s3.example/reports/r.docx","report_url_excel":"https://s3.example/reports/r.xlsx"}}
+
+### AI: finished with a business error → 200
+POST {{host}}/internal/v1/polls/{{pollAttemptId}}/observation
+Content-Type: application/json
+
+{"claimToken":"{{pollToken}}","outcome":"FAILED","failure":{"code":"EXTRACTION_FAILED","message":"Could not read document 2"}}
+
+### AI: task not found → 200
+POST {{host}}/internal/v1/polls/{{pollAttemptId}}/observation
+Content-Type: application/json
+
+{"claimToken":"{{pollToken}}","outcome":"NOT_FOUND"}
+
+### No usable answer (timeout) → 200
+POST {{host}}/internal/v1/polls/{{pollAttemptId}}/observation
+Content-Type: application/json
+
+{"claimToken":"{{pollToken}}","outcome":"TECHNICAL_ERROR","failure":{"code":"AI_TIMEOUT","message":"No response from AI within 10s"}}

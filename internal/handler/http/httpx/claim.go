@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/d9293/halyk-genai-integrator/internal/domain"
 )
 
 // Request and response bodies shared by the worker APIs (documents,
@@ -62,4 +64,42 @@ type RenewResponse struct {
 
 type AppliedResponse struct {
 	Applied bool `json:"applied" example:"true"`
+}
+
+const (
+	maxFailureCodeLen = 100
+	maxMessageLen     = 2000
+)
+
+// FailureInput is a worker's description of an error.
+type FailureInput struct {
+	// Short machine-readable reason.
+	Code *string `json:"code" maxLength:"100" example:"AI_TIMEOUT" validate:"required"`
+	// Human-readable details. No personal data, raw HTML or signed URLs.
+	Message *string `json:"message" maxLength:"2000" example:"No response from AI within 30s" validate:"required"`
+}
+
+// ToDomain validates the failure, reporting problems under path (e.g. "failure").
+func (f FailureInput) ToDomain(path string) (*domain.Failure, []FieldError) {
+	var fields []FieldError
+	var failure domain.Failure
+
+	switch {
+	case f.Code == nil || strings.TrimSpace(*f.Code) == "":
+		fields = append(fields, FieldError{Path: path + ".code", Code: FieldRequired})
+	case len(*f.Code) > maxFailureCodeLen:
+		fields = append(fields, FieldError{Path: path + ".code", Code: FieldTooLong})
+	default:
+		failure.Code = *f.Code
+	}
+
+	switch {
+	case f.Message == nil || strings.TrimSpace(*f.Message) == "":
+		fields = append(fields, FieldError{Path: path + ".message", Code: FieldRequired})
+	case len([]rune(*f.Message)) > maxMessageLen:
+		fields = append(fields, FieldError{Path: path + ".message", Code: FieldTooLong})
+	default:
+		failure.Message = *f.Message
+	}
+	return &failure, fields
 }

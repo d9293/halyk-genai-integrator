@@ -12,6 +12,7 @@ import (
 
 	"github.com/d9293/halyk-genai-integrator/internal/handler/http/document"
 	"github.com/d9293/halyk-genai-integrator/internal/handler/http/httpx"
+	"github.com/d9293/halyk-genai-integrator/internal/handler/http/poll"
 	"github.com/d9293/halyk-genai-integrator/internal/handler/http/submission"
 	"github.com/d9293/halyk-genai-integrator/internal/handler/http/task"
 )
@@ -26,6 +27,7 @@ type Router struct {
 	taskHandler       *task.Handler
 	documentHandler   *document.Handler
 	submissionHandler *submission.Handler
+	pollHandler       *poll.Handler
 }
 
 func NewRouter(
@@ -35,6 +37,7 @@ func NewRouter(
 	taskHandler *task.Handler,
 	documentHandler *document.Handler,
 	submissionHandler *submission.Handler,
+	pollHandler *poll.Handler,
 ) *Router {
 	return &Router{
 		callerID:          callerID,
@@ -43,6 +46,7 @@ func NewRouter(
 		taskHandler:       taskHandler,
 		documentHandler:   documentHandler,
 		submissionHandler: submissionHandler,
+		pollHandler:       pollHandler,
 	}
 }
 
@@ -77,6 +81,7 @@ func (router *Router) Engine() *gin.Engine {
 	internal := r.Group("/internal/v1")
 	router.documentHandler.Routes(internal)
 	router.submissionHandler.Routes(internal)
+	router.pollHandler.Routes(internal)
 
 	return r
 }
