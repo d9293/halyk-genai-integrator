@@ -206,6 +206,18 @@ WHERE status IN ('SUCCEEDED', 'FAILED') AND published_at IS NULL
 ORDER BY completed_at
 ```
 
+### Delivering results to BPM (worker.Response)
+
+The API never talks to Kafka: worker.Response publishes and reports back.
+These calls only touch the `published_at` / `publish_*` columns; `updated_at`
+is left alone because BPM sees it, and the task itself does not change.
+
+| Call | What happens |
+|---|---|
+| `results/claim` | Up to `limit` final tasks with `published_at IS NULL`, due (`publish_retry_at`) and not being published (`SKIP LOCKED`, index `queue_unpublished_idx`), oldest finished first. Each gets a `publish_claim_token` for `RESULT_CLAIM_LEASE`. Returns the topic (`KAFKA_RESULT_TOPIC`), key (`request_id`) and the message built from the row. |
+| `results/{requestGuid}/published` | After the broker ACK: `published_at = now()`, claim released. Never handed out again. Repeating it returns OK. A late call with an expired claim is refused (`409`); the result may then be published again, which BPM handles by deduplicating on `requestGuid`. |
+| `results/{requestGuid}/failure` | Kafka did not accept it: claim released, error saved, `publish_retry_at = now() + RESULT_RETRY_BASE_DELAY · 2^(earlier failures)`, at most `RESULT_RETRY_MAX_DELAY`. Never dropped. |
+
 ### Kafka message (v1)
 
 One message per task when it becomes `SUCCEEDED` or `FAILED`, built from the

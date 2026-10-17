@@ -79,8 +79,15 @@ func Run(ctx context.Context, cfg config.Config) error {
 		},
 	)
 
-	// Mock until the result database logic exists.
-	results := resultusecase.NewMockService(cfg.ResultClaimLease, cfg.KafkaResultTopic)
+	results := resultusecase.NewUseCase(
+		postgres.NewResultRepo(pool, cfg.Postgres.QueryTimeout),
+		resultusecase.Config{
+			Topic:     cfg.KafkaResultTopic,
+			Lease:     cfg.ResultClaimLease,
+			RetryBase: cfg.ResultRetryBaseDelay,
+			RetryMax:  cfg.ResultRetryMaxDelay,
+		},
+	)
 
 	router := httphandler.NewRouter(cfg.CallerID, cfg.SwaggerEnabled, pool.Ping,
 		taskhandler.NewHandler(tasks), documenthandler.NewHandler(documents),
@@ -101,7 +108,6 @@ func Run(ctx context.Context, cfg config.Config) error {
 			"operations", cfg.EnabledOperations,
 			"aiMaxInFlight", cfg.AIMaxInFlight,
 			"resultTopic", cfg.KafkaResultTopic,
-			"results", "mock",
 		)
 		serveErr <- server.ListenAndServe()
 	}()

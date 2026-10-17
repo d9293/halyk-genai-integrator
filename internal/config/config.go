@@ -56,7 +56,11 @@ type Config struct {
 	KafkaResultTopic string `env:"KAFKA_RESULT_TOPIC,required"`
 	// ResultClaimLease is how long worker.Response owns one result while publishing it.
 	ResultClaimLease time.Duration `env:"RESULT_CLAIM_LEASE,required"`
-	Postgres         PostgresConfig
+	// A result Kafka did not accept is tried again after ResultRetryBaseDelay,
+	// doubling up to ResultRetryMaxDelay. It is never dropped.
+	ResultRetryBaseDelay time.Duration `env:"RESULT_RETRY_BASE_DELAY,required"`
+	ResultRetryMaxDelay  time.Duration `env:"RESULT_RETRY_MAX_DELAY,required"`
+	Postgres             PostgresConfig
 }
 
 type PostgresConfig struct {
