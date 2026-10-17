@@ -538,3 +538,103 @@ func TestFullJourney(t *testing.T) {
 		t.Errorf("history:\n%s\nwant\n%s", got, want)
 	}
 }
+
+// noProgressRules flag any task still at AI right away, so tests need not wait hours.
+func noProgressRules() poll.Rules {
+	rules := testRules
+	rules.NoProgressTimeout = time.Nanosecond
+	return rules
+}
+
+func TestObserve_NoProgressIsFlaggedOnceAndStillPolled(t *testing.T) {
+	pool := newPool(t)
+	guid, attempt := atAI(t, pool)
+	repo := postgres.NewPollRepo(pool, queryTimeout)
+
+	observe(t, pool, repo, attempt, poll.Observation{Outcome: poll.OutcomeProcessing}, noProgressRules())
+
+	task := readTask(t, pool, guid)
+	if task.status != "NEEDS_ATTENTION" || task.errorCode == nil || *task.errorCode != "AI_NO_PROGRESS" || task.completed {
+		t.Fatalf("task = %+v, want NEEDS_ATTENTION with AI_NO_PROGRESS", task)
+	}
+	a := readAttempt(t, pool, attempt)
+	if a.state != "PROCESSING" || !pollIn(a, 10, 16) {
+		t.Errorf("attempt = %+v, want it still PROCESSING and polled again", a)
+	}
+	if n := activeAttempts(t, pool); n != 1 {
+		t.Errorf("active attempts = %d, want 1: AI may still be working, the place stays taken", n)
+	}
+
+	// More progress answers: still flagged, not back to REMOTE_RUNNING, flagged only once.
+	observe(t, pool, repo, attempt, poll.Observation{Outcome: poll.OutcomeProcessing}, noProgressRules())
+	observe(t, pool, repo, attempt, poll.Observation{Outcome: poll.OutcomeQueued}, noProgressRules())
+	if task := readTask(t, pool, guid); task.status != "NEEDS_ATTENTION" {
+		t.Errorf("task = %s, want it to stay NEEDS_ATTENTION until a final answer", task.status)
+	}
+	if n := auditCount(t, pool, guid, "AI_NO_PROGRESS"); n != 1 {
+		t.Errorf("AI_NO_PROGRESS audit rows = %d, want 1", n)
+	}
+	if got := claimResults(t, postgres.NewResultRepo(pool, queryTimeout)); len(got) != 0 {
+		t.Errorf("a flagged task must not produce a Kafka message yet, got %d", len(got))
+	}
+
+	// AI finishes after all: the task ends normally, with its Kafka message.
+	observe(t, pool, repo, attempt, poll.Observation{Outcome: poll.OutcomeSucceeded, Result: json.RawMessage(`{"late":true}`)}, noProgressRules())
+	task = readTask(t, pool, guid)
+	if task.status != "SUCCEEDED" || task.errorCode != nil || !task.completed {
+		t.Errorf("task = %+v, want SUCCEEDED with the flag cleared", task)
+	}
+	if n := activeAttempts(t, pool); n != 0 {
+		t.Errorf("active attempts = %d, want 0", n)
+	}
+	if got := claimResults(t, postgres.NewResultRepo(pool, queryTimeout)); len(got) != 1 {
+		t.Errorf("results to deliver = %d, want 1", len(got))
+	}
+}
+
+// AI unreachable for hours: only technical errors, never an answer.
+func TestObserve_NoProgressAfterOnlyTechnicalErrors(t *testing.T) {
+	pool := newPool(t)
+	guid, attempt := atAI(t, pool)
+	technical := poll.Observation{Outcome: poll.OutcomeTechnicalError, Failure: &domain.Failure{Code: "AI_TIMEOUT", Message: "10s"}}
+
+	observe(t, pool, postgres.NewPollRepo(pool, queryTimeout), attempt, technical, noProgressRules())
+
+	if task := readTask(t, pool, guid); task.status != "NEEDS_ATTENTION" || task.errorCode == nil || *task.errorCode != "AI_NO_PROGRESS" {
+		t.Errorf("task = %+v, want NEEDS_ATTENTION with AI_NO_PROGRESS", task)
+	}
+	if a := readAttempt(t, pool, attempt); a.state != "QUEUED" || !pollIn(a, 55, 61) {
+		t.Errorf("attempt = %+v, want unchanged and checked again in ~60s", a)
+	}
+}
+
+func TestObserve_NoProgressNotBeforeTheTimeout(t *testing.T) {
+	pool := newPool(t)
+	guid, attempt := atAI(t, pool)
+	rules := testRules
+	rules.NoProgressTimeout = time.Hour
+
+	observe(t, pool, postgres.NewPollRepo(pool, queryTimeout), attempt, poll.Observation{Outcome: poll.OutcomeProcessing}, rules)
+
+	if task := readTask(t, pool, guid); task.status != "REMOTE_RUNNING" {
+		t.Errorf("task = %s, want REMOTE_RUNNING: it was sent just now", task.status)
+	}
+}
+
+// A flagged task whose attempt AI then loses is sent again: a fresh attempt,
+// a fresh timeout, and the flag is cleared.
+func TestObserve_NoProgressThenLostIsSentAgain(t *testing.T) {
+	pool := newPool(t)
+	guid, attempt := atAI(t, pool)
+	repo := postgres.NewPollRepo(pool, queryTimeout)
+
+	observe(t, pool, repo, attempt, poll.Observation{Outcome: poll.OutcomeProcessing}, noProgressRules())
+	for range 3 {
+		observe(t, pool, repo, attempt, poll.Observation{Outcome: poll.OutcomeNotFound}, noProgressRules())
+	}
+
+	task := readTask(t, pool, guid)
+	if task.status != "READY_TO_SUBMIT" || task.errorCode != nil || task.retryCount != 1 {
+		t.Errorf("task = %+v, want READY_TO_SUBMIT with the flag cleared", task)
+	}
+}

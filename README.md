@@ -48,3 +48,4 @@ scripts/                      SQL to create the database and tables
 ```
 
 Database model and the reasoning behind it: [docs/database.md](docs/database.md).
+Admin panel backlog (not built yet): [docs/admin-panel.md](docs/admin-panel.md).

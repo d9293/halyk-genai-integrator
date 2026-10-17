@@ -77,4 +77,7 @@ type Rules struct {
 	MaxResubmissions int
 	// ResultMaxBytes caps the stored result; a bigger one needs attention.
 	ResultMaxBytes int
+	// NoProgressTimeout: a task still at AI this long after it was sent needs
+	// attention. It is still polled and keeps its AI place. 0 disables the check.
+	NoProgressTimeout time.Duration
 }

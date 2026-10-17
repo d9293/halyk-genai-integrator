@@ -167,8 +167,8 @@ registration ───┤                                                     �
 | `SUBMITTING` | worker.Request is sending the POST to AI right now (owns the attempt). | `submissions/claim` | `REMOTE_QUEUED`, `REMOTE_RUNNING`, `SUBMISSION_UNKNOWN`, `FAILED` | **yes** | no |
 | `SUBMISSION_UNKNOWN` | The POST got no reliable answer (timeout, lost response, sender died). AI may or may not have it; polling finds out. **Never** re-sent blindly. | outcome `UNKNOWN`, recovery | `REMOTE_QUEUED`, `REMOTE_RUNNING`, `SUCCEEDED`, `FAILED`, `READY_TO_SUBMIT` (lost) | **yes** | no |
 | `REMOTE_QUEUED` | AI confirmed it has the task; waiting in AI's own queue. | outcome `ACCEPTED`, poll `QUEUED` | `REMOTE_RUNNING`, `SUCCEEDED`, `FAILED`, `READY_TO_SUBMIT` (lost) | **yes** | no |
-| `REMOTE_RUNNING` | AI is working on it. | outcome `ACCEPTED` (processing), poll `PROCESSING` | `SUCCEEDED`, `FAILED`, `NEEDS_ATTENTION`, `READY_TO_SUBMIT` (lost) | **yes** | no |
-| `NEEDS_ATTENTION` | No safe automatic way forward; a person has to look (`error_code` says why: a document could not be copied, the result was too large). Not final. | `documents/failure` (out of retries), poll `SUCCEEDED` with an oversized result | manual action (admin panel, later) | no | no (visible via GET) |
+| `REMOTE_RUNNING` | AI is working on it. | outcome `ACCEPTED` (processing), poll `PROCESSING` | `SUCCEEDED`, `FAILED`, `NEEDS_ATTENTION` (too big a result, or no progress), `READY_TO_SUBMIT` (lost) | **yes** | no |
+| `NEEDS_ATTENTION` | A person should look; `error_code` says why. Not final. `DOCUMENT_COPY_FAILED` / `RESULT_TOO_LARGE`: stuck until someone acts. `AI_NO_PROGRESS`: still at AI and still polled; a final answer from AI later finishes it normally. | `documents/failure` (out of retries), poll `SUCCEEDED` with an oversized result, any non-final poll answer more than `AI_NO_PROGRESS_TIMEOUT` after sending | manual action ([admin panel](admin-panel.md), later); for `AI_NO_PROGRESS` also `SUCCEEDED` / `FAILED` / `READY_TO_SUBMIT` (lost) | only for `AI_NO_PROGRESS` | no (visible via GET) |
 | `SUCCEEDED` | **Final.** AI finished; `result_payload` holds its result. | poll `SUCCEEDED` | — | no | **yes** |
 | `FAILED` | **Final.** `error_code` / `error_detail` say why: AI's business error, AI rejected the task, or AI lost it too often. | poll `FAILED`, outcome `REJECTED`, lost-task rule | — | no | **yes** |
 
@@ -426,6 +426,7 @@ makes one GET to AI per attempt, and reports the answer.
 | `NOT_FOUND` | `not_found_count + 1` | unchanged | kept | `POLL_NOT_FOUND_DELAY` |
 | `NOT_FOUND`, the `LOST_TASK_NOT_FOUND_THRESHOLD`th in a row and the first ≥ `LOST_TASK_MIN_WINDOW` ago | `LOST` | `READY_TO_SUBMIT`, `retry_count + 1` (re-sent as a new attempt), or after `MAX_RESUBMISSIONS` re-sends `FAILED` `AI_TASK_LOST_RETRIES_EXHAUSTED` | freed | none |
 | `TECHNICAL_ERROR` | unchanged; error saved; NOT_FOUND streak neither extended nor reset | unchanged | kept | `POLL_ERROR_DELAY` |
+| any answer that leaves the attempt at AI, more than `AI_NO_PROGRESS_TIMEOUT` (2h) after it was sent | as above | **`NEEDS_ATTENTION`** `AI_NO_PROGRESS`, once; a later `QUEUED`/`PROCESSING` does not clear it, a final answer does | kept | as above |
 
 `NOT_FOUND` means AI's confirmed "task not found" (`404` with
 `{"detail": "Задача не найдена: <task_id>"}`). A `404` from a proxy or wrong
@@ -440,10 +441,12 @@ never applied twice.
 Lock order: attempt, then task, then writes. Concurrent copies of one
 observation apply exactly once.
 
-**Open item: no-progress safety net.** An attempt AI never finishes (or that
-only gets `TECHNICAL_ERROR`) is checked forever and keeps its place. The spec's
-safety net, `NEEDS_ATTENTION` after e.g. 2 hours without progress while
-polling continues, is not implemented yet.
+**No-progress safety net:** a task still at AI more than `AI_NO_PROGRESS_TIMEOUT`
+after its attempt was sent (counted from `attempts.created_at`; a re-send
+starts a new count) becomes `NEEDS_ATTENTION` with `AI_NO_PROGRESS`, so a
+person notices. It keeps being polled and keeps its AI place: AI may still be
+working. Only checked when the task is polled, so it does not fire while no
+worker.Response runs.
 
 ---
 

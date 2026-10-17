@@ -23,6 +23,7 @@ const (
 	auditActionResultRejected      = "RESULT_REJECTED"
 	auditActionAITaskLostResubmit  = "AI_TASK_LOST_RESUBMIT"
 	auditActionAITaskLostFailed    = "AI_TASK_LOST_RETRIES_EXHAUSTED"
+	auditActionAINoProgress        = "AI_NO_PROGRESS"
 )
 
 // Error codes written by PollRepo.
@@ -31,6 +32,7 @@ const (
 	errorAITaskLost          = "AI_TASK_LOST"
 	errorRetriesExhausted    = "AI_TASK_LOST_RETRIES_EXHAUSTED"
 	errorResultTooLarge      = "RESULT_TOO_LARGE"
+	errorAINoProgress        = "AI_NO_PROGRESS"
 )
 
 // maxRecoveredPerClaim bounds the recovery work done by one claim call.
@@ -146,6 +148,7 @@ type polledAttempt struct {
 	claimAlive      bool
 	notFoundCount   int
 	notFoundSeconds float64 // since the first NOT_FOUND of the current streak; 0 if none
+	ageSeconds      float64 // since the attempt was sent
 	taskStatus      string
 	taskRetryCount  int
 }
@@ -184,11 +187,12 @@ func (r *PollRepo) Observe(ctx context.Context, attemptID, claimToken uuid.UUID,
 	var a polledAttempt
 	err = tx.QueryRow(ctx, `
 		SELECT request_guid, state, claim_token, claim_owner, coalesce(claim_until > now(), false),
-		       not_found_count, coalesce(extract(epoch FROM now() - first_not_found_at), 0)
+		       not_found_count, coalesce(extract(epoch FROM now() - first_not_found_at), 0),
+		       extract(epoch FROM now() - created_at)
 		FROM integration.attempts
 		WHERE attempt_id = $1
 		FOR UPDATE`, attemptID,
-	).Scan(&a.requestGUID, &a.state, &a.claimToken, &a.claimOwner, &a.claimAlive, &a.notFoundCount, &a.notFoundSeconds)
+	).Scan(&a.requestGUID, &a.state, &a.claimToken, &a.claimOwner, &a.claimAlive, &a.notFoundCount, &a.notFoundSeconds, &a.ageSeconds)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return poll.ErrAttemptNotFound
 	}
@@ -211,20 +215,24 @@ func (r *PollRepo) Observe(ctx context.Context, attemptID, claimToken uuid.UUID,
 		return wrapPoll("lock task", err)
 	}
 
-	o := observer{tx: tx, attemptID: attemptID, attempt: a, rules: rules}
+	o := &observer{tx: tx, attemptID: attemptID, attempt: a, rules: rules}
+	var stillAtAI bool // the observation did not end the attempt
 	switch obs.Outcome {
 	case poll.OutcomeQueued, poll.OutcomeProcessing:
-		err = o.progress(ctx, obs.Outcome)
+		err, stillAtAI = o.progress(ctx, obs.Outcome), true
 	case poll.OutcomeSucceeded:
 		err = o.succeeded(ctx, obs.Result)
 	case poll.OutcomeFailed:
 		err = o.failed(ctx, obs.Failure)
 	case poll.OutcomeNotFound:
-		err = o.notFound(ctx)
+		stillAtAI, err = o.notFound(ctx)
 	case poll.OutcomeTechnicalError:
-		err = o.technicalError(ctx, obs.Failure)
+		err, stillAtAI = o.technicalError(ctx, obs.Failure), true
 	default:
 		err = fmt.Errorf("unknown outcome %q", obs.Outcome)
+	}
+	if err == nil && stillAtAI {
+		err = o.flagNoProgress(ctx)
 	}
 	if err != nil {
 		return err
@@ -244,7 +252,7 @@ type observer struct {
 	rules     poll.Rules
 }
 
-func (o observer) actor() string {
+func (o *observer) actor() string {
 	if o.attempt.claimOwner == nil {
 		return "unknown"
 	}
@@ -252,7 +260,7 @@ func (o observer) actor() string {
 }
 
 // progress: AI has the task and is not done. Any valid answer ends a NOT_FOUND streak.
-func (o observer) progress(ctx context.Context, outcome poll.Outcome) error {
+func (o *observer) progress(ctx context.Context, outcome poll.Outcome) error {
 	state, status := "QUEUED", domain.StatusRemoteQueued
 	// A late QUEUED after PROCESSING does not move the task backwards.
 	if outcome == poll.OutcomeProcessing || o.attempt.state == "PROCESSING" {
@@ -270,7 +278,8 @@ func (o observer) progress(ctx context.Context, outcome poll.Outcome) error {
 	if err != nil {
 		return wrapPoll("update attempt", err)
 	}
-	if o.attempt.taskStatus == string(status) {
+	// A task flagged for no progress stays flagged until AI gives a final answer.
+	if o.attempt.taskStatus == string(status) || o.attempt.taskStatus == string(domain.StatusNeedsAttention) {
 		return nil
 	}
 	return o.setTask(ctx, status, nil, auditActionRemoteStatus, nil)
@@ -278,7 +287,7 @@ func (o observer) progress(ctx context.Context, outcome poll.Outcome) error {
 
 // succeeded: AI finished. The result is stored as AI returned it, unless it is
 // too big; then a person must look. Either way the AI place is freed.
-func (o observer) succeeded(ctx context.Context, result []byte) error {
+func (o *observer) succeeded(ctx context.Context, result []byte) error {
 	if err := o.finishAttempt(ctx, "DONE", nil); err != nil {
 		return err
 	}
@@ -304,7 +313,7 @@ func (o observer) succeeded(ctx context.Context, result []byte) error {
 }
 
 // failed: AI finished with a business error. The AI place is freed.
-func (o observer) failed(ctx context.Context, failure *domain.Failure) error {
+func (o *observer) failed(ctx context.Context, failure *domain.Failure) error {
 	if err := o.finishAttempt(ctx, "ERROR", failure); err != nil {
 		return err
 	}
@@ -314,7 +323,8 @@ func (o observer) failed(ctx context.Context, failure *domain.Failure) error {
 // notFound counts AI's "task not found" answers. Enough of them in a row, over
 // a long enough window, mean AI lost the task: the attempt is LOST, its AI
 // place is freed, and the task is sent again or, after too many re-sends, fails.
-func (o observer) notFound(ctx context.Context) error {
+// stillAtAI reports whether the attempt is still active afterwards.
+func (o *observer) notFound(ctx context.Context) (stillAtAI bool, err error) {
 	count := o.attempt.notFoundCount + 1
 	window := time.Duration(o.attempt.notFoundSeconds * float64(time.Second))
 	lost := count >= o.rules.LostThreshold && window >= o.rules.LostMinWindow
@@ -328,16 +338,16 @@ func (o observer) notFound(ctx context.Context) error {
 			WHERE attempt_id = $1`,
 			o.attemptID, count, o.rules.NotFoundDelay.Seconds())
 		if err != nil {
-			return wrapPoll("count not found", err)
+			return false, wrapPoll("count not found", err)
 		}
-		return nil
+		return true, nil
 	}
 
 	lostFailure := &domain.Failure{
 		Code:    errorAITaskLost,
 		Message: fmt.Sprintf("AI did not find the task %d times in a row", count),
 	}
-	_, err := o.tx.Exec(ctx, `
+	_, err = o.tx.Exec(ctx, `
 		UPDATE integration.attempts
 		SET state = 'LOST', not_found_count = $2, poll_at = NULL, poll_count = poll_count + 1, finished_at = now(),
 		    claim_token = NULL, claim_until = NULL, claim_owner = NULL,
@@ -345,7 +355,7 @@ func (o observer) notFound(ctx context.Context) error {
 		WHERE attempt_id = $1`,
 		o.attemptID, count, lostFailure.Code, lostFailure.Message)
 	if err != nil {
-		return wrapPoll("mark attempt lost", err)
+		return false, wrapPoll("mark attempt lost", err)
 	}
 
 	if o.attempt.taskRetryCount >= o.rules.MaxResubmissions {
@@ -353,7 +363,7 @@ func (o observer) notFound(ctx context.Context) error {
 			Code:    errorRetriesExhausted,
 			Message: fmt.Sprintf("AI lost the task %d times", o.attempt.taskRetryCount+1),
 		}
-		return o.setTask(ctx, domain.StatusFailed, failure, auditActionAITaskLostFailed, &lostFailure.Code)
+		return false, o.setTask(ctx, domain.StatusFailed, failure, auditActionAITaskLostFailed, &lostFailure.Code)
 	}
 
 	// Sent again by the next submission claim, as a new attempt.
@@ -364,14 +374,14 @@ func (o observer) notFound(ctx context.Context) error {
 		WHERE request_guid = $1`,
 		o.attempt.requestGUID)
 	if err != nil {
-		return wrapPoll("resubmit task", err)
+		return false, wrapPoll("resubmit task", err)
 	}
-	return o.audit(ctx, auditActionAITaskLostResubmit, string(domain.StatusReadyToSubmit), &lostFailure.Code)
+	return false, o.audit(ctx, auditActionAITaskLostResubmit, string(domain.StatusReadyToSubmit), &lostFailure.Code)
 }
 
 // technicalError: no usable answer. Nothing about the task changes; it is
 // checked again later. The NOT_FOUND streak is neither extended nor reset.
-func (o observer) technicalError(ctx context.Context, failure *domain.Failure) error {
+func (o *observer) technicalError(ctx context.Context, failure *domain.Failure) error {
 	_, err := o.tx.Exec(ctx, `
 		UPDATE integration.attempts
 		SET poll_at = now() + make_interval(secs => $2), poll_count = poll_count + 1,
@@ -385,8 +395,24 @@ func (o observer) technicalError(ctx context.Context, failure *domain.Failure) e
 	return nil
 }
 
+// flagNoProgress puts a task that is still at AI long after it was sent into
+// NEEDS_ATTENTION, once. It keeps being polled and keeps its AI place; a final
+// answer from AI later still finishes it normally.
+func (o *observer) flagNoProgress(ctx context.Context) error {
+	timeout := o.rules.NoProgressTimeout
+	age := time.Duration(o.attempt.ageSeconds * float64(time.Second))
+	if timeout <= 0 || age < timeout || o.attempt.taskStatus == string(domain.StatusNeedsAttention) {
+		return nil
+	}
+	failure := &domain.Failure{
+		Code:    errorAINoProgress,
+		Message: fmt.Sprintf("No final answer from AI %s after sending; still checking", age.Round(time.Minute)),
+	}
+	return o.setTask(ctx, domain.StatusNeedsAttention, failure, auditActionAINoProgress, nil)
+}
+
 // finishAttempt ends the attempt in a final state, which frees its AI place.
-func (o observer) finishAttempt(ctx context.Context, state string, failure *domain.Failure) error {
+func (o *observer) finishAttempt(ctx context.Context, state string, failure *domain.Failure) error {
 	var code, detail *string
 	if failure != nil {
 		code, detail = &failure.Code, &failure.Message
@@ -406,7 +432,7 @@ func (o observer) finishAttempt(ctx context.Context, state string, failure *doma
 }
 
 // setTask moves the task to status with an optional error, and writes the audit row.
-func (o observer) setTask(ctx context.Context, status domain.Status, failure *domain.Failure, action string, detail *string) error {
+func (o *observer) setTask(ctx context.Context, status domain.Status, failure *domain.Failure, action string, detail *string) error {
 	var code, message *string
 	if failure != nil {
 		code, message = &failure.Code, &failure.Message
@@ -421,10 +447,14 @@ func (o observer) setTask(ctx context.Context, status domain.Status, failure *do
 	if err != nil {
 		return wrapPoll("update task", err)
 	}
-	return o.audit(ctx, action, string(status), detail)
+	if err := o.audit(ctx, action, string(status), detail); err != nil {
+		return err
+	}
+	o.attempt.taskStatus = string(status)
+	return nil
 }
 
-func (o observer) audit(ctx context.Context, action, newState string, detail *string) error {
+func (o *observer) audit(ctx context.Context, action, newState string, detail *string) error {
 	_, err := o.tx.Exec(ctx, `
 		INSERT INTO integration.audit (request_guid, attempt_id, actor, action, old_state, new_state, detail)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,

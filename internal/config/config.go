@@ -52,6 +52,8 @@ type Config struct {
 	MaxResubmissions          int           `env:"MAX_RESUBMISSIONS,required"`
 	// ResultMaxBytes caps the stored AI result; a bigger one needs attention.
 	ResultMaxBytes int `env:"RESULT_MAX_BYTES,required"`
+	// AINoProgressTimeout: a task still at AI this long after it was sent needs attention.
+	AINoProgressTimeout time.Duration `env:"AI_NO_PROGRESS_TIMEOUT,required"`
 	// KafkaResultTopic is where final task results are published for BPM.
 	KafkaResultTopic string `env:"KAFKA_RESULT_TOPIC,required"`
 	// ResultClaimLease is how long worker.Response owns one result while publishing it.
