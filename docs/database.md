@@ -260,7 +260,7 @@ S3 API, and AI receives the S3 link.
 | `request_guid` | `uuid` | NOT NULL | FK → `queue` | The task this file belongs to. | the task |
 | `document_id` | `uuid` | NOT NULL | | BPM's ID for the file. Unique within one task only: the same file may be used by several tasks. | BPM `documentId` |
 | `position` | `int` | NOT NULL | `CHECK (>= 0)` | Index in BPM's `documents[]` array. Keeps BPM's order: AI receives `files[]` in this order, and AI results refer to files by position (e.g. `only_a` = position 0). | `0`, `1`, … |
-| `attstore_url` | `text` | NOT NULL | | Where to download the file. Must be https, no credentials, host from the allowlist. Never changes; files are assumed not to change in Attstore. | BPM `attstoreUrl` |
+| `attstore_url` | `text` | NOT NULL | | Where to download the file: any `http(s)` link, without credentials in it. Never changes; files are assumed not to change in Attstore. | BPM `attstoreUrl` |
 | `status` | `text` | NOT NULL | `'PENDING'`, `CHECK`, see below | Copy progress. | `PENDING` |
 | `s3_uri` | `text` | NULL | | Link to the copy in S3 that AI receives, e.g. `s3://ai-input/...`. S3 objects are permanent, so a re-send to AI reuses it without copying again. | `NULL` |
 | `size_bytes` | `bigint` | NULL | `CHECK (>= 0)` | Size of the copied file, reported by the worker. | `NULL` |
@@ -539,6 +539,7 @@ Deliberate differences from the original spec (`Final Requirements/Integrator.Ap
 | `REJECTED` submission fails the task right away (spec: `NEEDS_ATTENTION` until step 5) | AI clearly refused it; nothing to recover. |
 | Task key is BPM's `request_guid`; `request_id` (Camunda request) is a plain, non-unique column | One Camunda request can run several operations, including the same operation more than once. BPM matches results by `requestId` (which request) + `requestGuid` (which task). |
 | Documents get our own `id`; BPM's `document_id` is unique per task only | The same file can be used by several tasks. |
+| Document links: any `http(s)` link is accepted, no https-only rule and no host allowlist (spec: "HTTPS host Attstore из allowlist"); only links with credentials are refused | BPM is a trusted internal caller and its links are not restricted in practice. Known risk: the worker downloads whatever link it is given (SSRF), so the trust boundary is BPM. Decision 2026-10-18. |
 | A BPM retry is a **new `requestGuid`** (a new task), never a reset of the old one | No reset logic, no "did the file change?" checks, and one task always means exactly one final outcome. Our own re-send after AI lost a task stays within the same task and reuses its S3 copies. |
 | Kafka delivery state lives on `queue` (`published_at`, `publish_*`), no separate outbox table, no `event_id` | One task = exactly one Kafka message, so the task row is the outbox row and `requestGuid` identifies the message. Finishing a task already creates its "message to send". A separate table would only be needed for several messages per task. |
 

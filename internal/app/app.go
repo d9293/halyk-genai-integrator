@@ -37,7 +37,6 @@ func Run(ctx context.Context, cfg config.Config) error {
 
 	tasks, err := taskusecase.NewUseCase(postgres.NewTaskRepo(pool, cfg.Postgres.QueryTimeout), taskusecase.Config{
 		EnabledOperations: cfg.EnabledOperations,
-		AttstoreHosts:     cfg.AttstoreHosts,
 	})
 	if err != nil {
 		return fmt.Errorf("create task usecase: %w", err)

@@ -55,7 +55,6 @@ func newUseCase(t *testing.T, pool *pgxpool.Pool) *task.UseCase {
 	t.Helper()
 	uc, err := task.NewUseCase(postgres.NewTaskRepo(pool, queryTimeout), task.Config{
 		EnabledOperations: []domain.Operation{domain.OperationSocialMedia, domain.OperationRegisterCompare},
-		AttstoreHosts:     []string{"attstore.example"},
 	})
 	if err != nil {
 		t.Fatal(err)

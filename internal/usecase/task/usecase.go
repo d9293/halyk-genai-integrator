@@ -29,14 +29,11 @@ type taskRepo interface {
 type Config struct {
 	// EnabledOperations accept new tasks; unconfirmed operations stay disabled.
 	EnabledOperations []domain.Operation
-	// AttstoreHosts is the allowlist of hosts for document attstoreUrl.
-	AttstoreHosts []string
 }
 
 type UseCase struct {
-	repo          taskRepo
-	enabled       map[domain.Operation]bool
-	attstoreHosts map[string]bool
+	repo    taskRepo
+	enabled map[domain.Operation]bool
 }
 
 func NewUseCase(repo taskRepo, cfg Config) (*UseCase, error) {
@@ -53,15 +50,9 @@ func NewUseCase(repo taskRepo, cfg Config) (*UseCase, error) {
 		enabled[op] = true
 	}
 
-	hosts := make(map[string]bool)
-	for _, h := range cfg.AttstoreHosts {
-		hosts[h] = true
-	}
-
 	return &UseCase{
-		repo:          repo,
-		enabled:       enabled,
-		attstoreHosts: hosts,
+		repo:    repo,
+		enabled: enabled,
 	}, nil
 }
 
@@ -134,12 +125,12 @@ func (uc *UseCase) validateDocuments(docs []domain.Document) []FieldError {
 		}
 		seenIDs[d.DocumentID] = true
 
+		// Any http(s) link is accepted: BPM is a trusted caller and its links
+		// are not restricted to known hosts (decision 2026-10-18). Credentials
+		// in the link are refused so they never land in our database and logs.
 		u, err := url.Parse(d.AttstoreURL)
-		switch {
-		case err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil:
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
 			fields = append(fields, FieldError{Path: path + ".attstoreUrl", Code: CodeInvalidFormat})
-		case !uc.attstoreHosts[u.Hostname()]:
-			fields = append(fields, FieldError{Path: path + ".attstoreUrl", Code: CodeNotAllowed})
 		}
 	}
 	return fields

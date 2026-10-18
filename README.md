@@ -29,6 +29,7 @@ variables already set in the environment take priority.
 make test              # unit tests; integration tests are skipped
 make test-integration  # all tests, incl. integration tests against a throwaway Postgres in Docker
 make db-init           # create schema and tables on the local infra Postgres (once)
+make minio-init        # sample documents and reports in the local MinIO (bpm-bucket); safe to rerun
 make swagger    # regenerate docs/swagger after changing handler annotations (needs swag CLI)
 make mocks      # regenerate moq mocks (needs moq)
 ```

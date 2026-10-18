@@ -1,6 +1,6 @@
 CONFIG ?= dev.env
 
-.PHONY: run test test-integration swagger mocks fmt vet check db-init sql-scripts
+.PHONY: run test test-integration swagger mocks fmt vet check db-init sql-scripts minio-init
 
 run: ## Run the app with $(CONFIG)
 	go run . --config_file $(CONFIG)
@@ -45,6 +45,9 @@ db-init: ## Create schema and tables on the local infra Postgres (once)
 	docker exec -i infra-postgres psql -q -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/05_queue_ready_index.sql
 	docker exec -i infra-postgres psql -q -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/06_attempts_poll_index.sql
 	docker exec -i infra-postgres psql -q -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/07_queue_publish.sql
+
+minio-init: ## Upload sample documents and reports to the local MinIO (bpm-bucket); safe to run again
+	./scripts/minio/init.sh
 
 MIGRATIONS := schema/postgresql/migration
 

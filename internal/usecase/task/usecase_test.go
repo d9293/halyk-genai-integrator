@@ -39,7 +39,6 @@ func newTestUseCase(t *testing.T, repo taskRepo) *UseCase {
 	t.Helper()
 	uc, err := NewUseCase(repo, Config{
 		EnabledOperations: []domain.Operation{domain.OperationSocialMedia, domain.OperationRegisterCompare},
-		AttstoreHosts:     []string{"attstore.example"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -231,10 +230,10 @@ func TestRegister_ValidationErrors(t *testing.T) {
 			"[{input.adjudicate INVALID_TYPE}]"},
 		{"duplicate document id", registerCompareRequest(`{}`, doc1, doc1),
 			"[{documents[1].documentId DUPLICATE}]"},
-		{"http url", registerCompareRequest(`{}`, doc1, withURL("http://attstore.example/2")),
+		{"not an http(s) link", registerCompareRequest(`{}`, doc1, withURL("file:///etc/passwd")),
 			"[{documents[1].attstoreUrl INVALID_FORMAT}]"},
-		{"host not allowed", registerCompareRequest(`{}`, doc1, withURL("https://evil.example/2")),
-			"[{documents[1].attstoreUrl NOT_ALLOWED}]"},
+		{"no host", registerCompareRequest(`{}`, doc1, withURL("https:///a.pdf")),
+			"[{documents[1].attstoreUrl INVALID_FORMAT}]"},
 		{"credentials in url", registerCompareRequest(`{}`, doc1, withURL("https://user:pass@attstore.example/2")),
 			"[{documents[1].attstoreUrl INVALID_FORMAT}]"},
 	}

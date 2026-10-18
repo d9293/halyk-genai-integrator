@@ -1,5 +1,6 @@
 # Sample requests for the JetBrains HTTP client (GoLand). Synthetic data only.
-# Start the app first: make run (needs the local infra Postgres, see scripts/README.md)
+# Start the app first: make run (needs the local infra Postgres, see scripts/README.md).
+# Document links point to the sample files `make minio-init` puts into the local MinIO.
 
 @host = http://localhost:8080
 
@@ -23,13 +24,13 @@ GET {{host}}/api/v1/tasks/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
 POST {{host}}/api/v1/tasks
 Content-Type: application/json
 
-{"requestId":"44444444-4444-4444-8444-444444444444","requestGuid":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","operation":"REGISTER_COMPARE","input":{"adjudicate":true},"documents":[{"documentId":"22222222-2222-4222-8222-222222222222","attstoreUrl":"https://attstore.example/documents/1"},{"documentId":"33333333-3333-4333-8333-333333333333","attstoreUrl":"https://attstore.example/documents/2"}]}
+{"requestId":"44444444-4444-4444-8444-444444444444","requestGuid":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","operation":"REGISTER_COMPARE","input":{"adjudicate":true},"documents":[{"documentId":"22222222-2222-4222-8222-222222222222","attstoreUrl":"http://localhost:9000/bpm-bucket/attstore-mock/registry-a.pdf"},{"documentId":"33333333-3333-4333-8333-333333333333","attstoreUrl":"http://localhost:9000/bpm-bucket/attstore-mock/registry-b.pdf"}]}
 
 ### REGISTER_COMPARE with one document → 422 VALIDATION_ERROR, documents INVALID_COUNT
 POST {{host}}/api/v1/tasks
 Content-Type: application/json
 
-{"requestId":"55555555-5555-4555-8555-555555555555","requestGuid":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","operation":"REGISTER_COMPARE","input":{},"documents":[{"documentId":"22222222-2222-4222-8222-222222222222","attstoreUrl":"https://attstore.example/documents/1"}]}
+{"requestId":"55555555-5555-4555-8555-555555555555","requestGuid":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","operation":"REGISTER_COMPARE","input":{},"documents":[{"documentId":"22222222-2222-4222-8222-222222222222","attstoreUrl":"http://localhost:9000/bpm-bucket/attstore-mock/registry-a.pdf"}]}
 
 ### Unknown field → 400 VALIDATION_ERROR, extra UNKNOWN_FIELD
 POST {{host}}/api/v1/tasks
@@ -44,7 +45,7 @@ GET {{host}}/api/v1/tasks/99999999-9999-4999-8999-999999999999
 POST {{host}}/api/v1/tasks
 Content-Type: application/json
 
-{"requestId":"44444444-4444-4444-8444-444444444444","requestGuid":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","operation":"REGISTER_COMPARE","input":{"adjudicate":false},"documents":[{"documentId":"22222222-2222-4222-8222-222222222222","attstoreUrl":"https://attstore.example/documents/1"},{"documentId":"33333333-3333-4333-8333-333333333333","attstoreUrl":"https://attstore.example/documents/2"}]}
+{"requestId":"44444444-4444-4444-8444-444444444444","requestGuid":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","operation":"REGISTER_COMPARE","input":{"adjudicate":false},"documents":[{"documentId":"22222222-2222-4222-8222-222222222222","attstoreUrl":"http://localhost:9000/bpm-bucket/attstore-mock/registry-a.pdf"},{"documentId":"33333333-3333-4333-8333-333333333333","attstoreUrl":"http://localhost:9000/bpm-bucket/attstore-mock/registry-b.pdf"}]}
 
 ### Readiness: 200 when the database is reachable, 503 otherwise
 GET {{host}}/health/readiness

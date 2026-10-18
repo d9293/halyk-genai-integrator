@@ -20,7 +20,6 @@ type Config struct {
 	// CallerID identifies BPM while auth is deferred (decision 2026-10-13).
 	CallerID          string             `env:"CALLER_ID,required"`
 	EnabledOperations []domain.Operation `env:"ENABLED_OPERATIONS,required"`
-	AttstoreHosts     []string           `env:"ATTSTORE_ALLOWED_HOSTS,required"`
 	// DocumentClaimLease is how long a worker owns a claimed document without renewing.
 	DocumentClaimLease time.Duration `env:"DOCUMENT_CLAIM_LEASE,required"`
 	// A failed copy is retried after DocumentRetryBaseDelay, doubling up to
