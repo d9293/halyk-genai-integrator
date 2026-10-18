@@ -25,7 +25,7 @@ const (
 	messageClaimLost       = "Владение попыткой утрачено: токен неверен или срок истёк"
 )
 
-//go:generate moq -out submission_service_mock_test.go . submissionService
+//go:generate go run github.com/matryer/moq@v0.8.1 -out submission_service_mock_test.go . submissionService
 
 type submissionService interface {
 	Claim(ctx context.Context, workerID string, limit int) ([]submission.ClaimedSubmission, error)
@@ -173,6 +173,7 @@ func attemptIDParam(c *gin.Context) (uuid.UUID, bool) {
 
 func (h *Handler) writeUsecaseError(c *gin.Context, err error) {
 	switch {
+	case httpx.ClientGone(c, err):
 	case errors.Is(err, submission.ErrAttemptNotFound):
 		httpx.WriteError(c, http.StatusNotFound, codeAttemptNotFound, messageAttemptNotFound)
 	case errors.Is(err, submission.ErrClaimLost):

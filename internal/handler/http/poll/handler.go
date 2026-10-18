@@ -24,7 +24,7 @@ const (
 	messageClaimLost       = "Владение проверкой утрачено: токен неверен, срок истёк или ответ уже учтён"
 )
 
-//go:generate moq -out poll_service_mock_test.go . pollService
+//go:generate go run github.com/matryer/moq@v0.8.1 -out poll_service_mock_test.go . pollService
 
 type pollService interface {
 	Claim(ctx context.Context, workerID string, limit int) ([]poll.ClaimedPoll, error)
@@ -123,6 +123,7 @@ func (h *Handler) observation(c *gin.Context) {
 
 func (h *Handler) writeUsecaseError(c *gin.Context, err error) {
 	switch {
+	case httpx.ClientGone(c, err):
 	case errors.Is(err, poll.ErrAttemptNotFound):
 		httpx.WriteError(c, http.StatusNotFound, codeAttemptNotFound, messageAttemptNotFound)
 	case errors.Is(err, poll.ErrClaimLost):

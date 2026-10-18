@@ -2,6 +2,9 @@
 package httpx
 
 import (
+	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -69,4 +72,16 @@ func WriteServiceUnavailable(c *gin.Context) {
 			Retryable: true,
 		},
 	})
+}
+
+// ClientGone reports whether err only means the caller hung up, e.g. a worker
+// that stopped waiting for a renew it no longer needs. That is not a server
+// error: it is logged at info and nothing is answered.
+func ClientGone(c *gin.Context, err error) bool {
+	if !errors.Is(err, context.Canceled) || c.Request.Context().Err() == nil {
+		return false
+	}
+	slog.InfoContext(c.Request.Context(), "caller went away before the answer", "path", c.FullPath())
+	c.Abort()
+	return true
 }

@@ -27,7 +27,7 @@ const (
 	messageOperationNotEnabled = "Операция не поддерживается"
 )
 
-//go:generate moq -out task_service_mock_test.go . taskService
+//go:generate go run github.com/matryer/moq@v0.8.1 -out task_service_mock_test.go . taskService
 
 type taskService interface {
 	// Register returns the stored task and whether this call created it.
@@ -124,6 +124,7 @@ func (h *Handler) get(c *gin.Context) {
 func (h *Handler) writeUsecaseError(c *gin.Context, err error) {
 	var validationErr *task.ValidationError
 	switch {
+	case httpx.ClientGone(c, err):
 	case errors.As(err, &validationErr):
 		fields := make([]httpx.FieldError, 0, len(validationErr.Fields))
 		for _, f := range validationErr.Fields {

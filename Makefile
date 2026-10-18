@@ -27,7 +27,7 @@ test-integration: ## Run all tests, including integration tests against a throwa
 swagger: ## Regenerate docs/swagger from handler annotations
 	swag init -g main.go -o docs/swagger --parseInternal
 
-mocks: ## Regenerate moq mocks
+mocks: ## Regenerate moq mocks (moq is pinned in the go:generate lines)
 	go generate ./...
 
 fmt:

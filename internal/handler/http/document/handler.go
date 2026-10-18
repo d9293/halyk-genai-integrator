@@ -25,7 +25,7 @@ const (
 	messageClaimLost        = "Владение документом утрачено: токен неверен или срок истёк"
 )
 
-//go:generate moq -out document_service_mock_test.go . documentService
+//go:generate go run github.com/matryer/moq@v0.8.1 -out document_service_mock_test.go . documentService
 
 type documentService interface {
 	Claim(ctx context.Context, workerID string, limit int) ([]document.ClaimedDocument, error)
@@ -213,6 +213,7 @@ func documentID(c *gin.Context) (uuid.UUID, bool) {
 
 func (h *Handler) writeUsecaseError(c *gin.Context, err error) {
 	switch {
+	case httpx.ClientGone(c, err):
 	case errors.Is(err, document.ErrDocumentNotFound):
 		httpx.WriteError(c, http.StatusNotFound, codeDocumentNotFound, messageDocumentNotFound)
 	case errors.Is(err, document.ErrClaimLost):

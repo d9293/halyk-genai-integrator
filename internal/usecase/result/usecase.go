@@ -10,7 +10,7 @@ import (
 	"github.com/d9293/halyk-genai-integrator/internal/domain"
 )
 
-//go:generate moq -out result_repo_mock_test.go . resultRepo
+//go:generate go run github.com/matryer/moq@v0.8.1 -out result_repo_mock_test.go . resultRepo
 
 type resultRepo interface {
 	// Claim gives workerID up to limit results to publish, each owned for
