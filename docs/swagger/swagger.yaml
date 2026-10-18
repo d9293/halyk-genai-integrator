@@ -84,6 +84,14 @@ definitions:
         example: 286a795c-37bf-4ea3-9c85-47c886cf3f2a
         format: uuid
         type: string
+      operation:
+        description: Operation of the task the document belongs to, e.g. for the storage
+          path.
+        enum:
+        - SOCIAL_MEDIA
+        - REGISTER_COMPARE
+        example: REGISTER_COMPARE
+        type: string
       position:
         description: Index of the file in the task; AI receives files in this order.
         example: 0

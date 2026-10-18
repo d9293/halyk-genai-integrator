@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/d9293/halyk-genai-integrator/internal/domain"
 )
 
 var (
@@ -23,6 +25,8 @@ type ClaimedDocument struct {
 	// ID is our documents.id; the worker uses it in complete/failure/renew.
 	ID          uuid.UUID
 	RequestGUID uuid.UUID
+	// Operation of the task the document belongs to.
+	Operation domain.Operation
 	// DocumentID is BPM's ID of the file.
 	DocumentID  uuid.UUID
 	AttstoreURL string

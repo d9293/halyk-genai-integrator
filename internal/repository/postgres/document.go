@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/d9293/halyk-genai-integrator/internal/domain"
 	"github.com/d9293/halyk-genai-integrator/internal/usecase/document"
 )
 
@@ -47,9 +48,9 @@ const claimDocumentsSQL = `
 	    claim_until = now() + make_interval(secs => $2),
 	    claim_owner = $3,
 	    updated_at  = now()
-	FROM candidates c
-	WHERE d.id = c.id
-	RETURNING d.id, d.request_guid, d.document_id, d.attstore_url, d.position, d.claim_token, d.claim_until`
+	FROM candidates c, integration.queue q
+	WHERE d.id = c.id AND q.request_guid = d.request_guid
+	RETURNING d.id, d.request_guid, q.operation, d.document_id, d.attstore_url, d.position, d.claim_token, d.claim_until`
 
 // startPreparingSQL moves tasks whose first document was just claimed from
 // WAITING_DOCUMENTS to PREPARING_DOCUMENTS, with one audit row each. Tasks
@@ -101,7 +102,9 @@ func (r *DocumentRepo) Claim(ctx context.Context, workerID string, limit int, le
 	}
 	claimed, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (document.ClaimedDocument, error) {
 		var d document.ClaimedDocument
-		err := row.Scan(&d.ID, &d.RequestGUID, &d.DocumentID, &d.AttstoreURL, &d.Position, &d.ClaimToken, &d.ClaimUntil)
+		var operation string
+		err := row.Scan(&d.ID, &d.RequestGUID, &operation, &d.DocumentID, &d.AttstoreURL, &d.Position, &d.ClaimToken, &d.ClaimUntil)
+		d.Operation = domain.Operation(operation)
 		return d, err
 	})
 	if err != nil {

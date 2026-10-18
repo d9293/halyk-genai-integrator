@@ -1044,6 +1044,15 @@ const docTemplate = `{
                     "format": "uuid",
                     "example": "286a795c-37bf-4ea3-9c85-47c886cf3f2a"
                 },
+                "operation": {
+                    "description": "Operation of the task the document belongs to, e.g. for the storage path.",
+                    "type": "string",
+                    "enum": [
+                        "SOCIAL_MEDIA",
+                        "REGISTER_COMPARE"
+                    ],
+                    "example": "REGISTER_COMPARE"
+                },
                 "position": {
                     "description": "Index of the file in the task; AI receives files in this order.",
                     "type": "integer",

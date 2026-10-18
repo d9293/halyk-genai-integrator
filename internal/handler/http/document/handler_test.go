@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/d9293/halyk-genai-integrator/internal/domain"
 	"github.com/d9293/halyk-genai-integrator/internal/handler/http/httpx"
 	"github.com/d9293/halyk-genai-integrator/internal/usecase/document"
 )
@@ -65,6 +66,7 @@ func TestClaim(t *testing.T) {
 		return []document.ClaimedDocument{{
 			ID:          uuid.MustParse(docID),
 			RequestGUID: uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+			Operation:   domain.OperationRegisterCompare,
 			DocumentID:  uuid.MustParse("22222222-2222-4222-8222-222222222222"),
 			AttstoreURL: "https://attstore.example/1",
 			Position:    1,
@@ -77,7 +79,7 @@ func TestClaim(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body)
 	}
-	want := `{"items":[{"id":"d0c00000-0000-4000-8000-000000000001","requestGuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",` +
+	want := `{"items":[{"id":"d0c00000-0000-4000-8000-000000000001","requestGuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","operation":"REGISTER_COMPARE",` +
 		`"bpmDocumentId":"22222222-2222-4222-8222-222222222222","attstoreUrl":"https://attstore.example/1","position":1,` +
 		`"claimToken":"7b1e2c3d-0000-4000-8000-000000000001","claimUntil":"2026-10-15T08:01:00Z"}]}`
 	if w.Body.String() != want {

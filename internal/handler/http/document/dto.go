@@ -28,6 +28,8 @@ type ClaimedDocument struct {
 	// Use this id in /documents/{id}/complete, /failure and /renew.
 	ID          uuid.UUID `json:"id" format:"uuid" example:"286a795c-37bf-4ea3-9c85-47c886cf3f2a"`
 	RequestGUID uuid.UUID `json:"requestGuid" format:"uuid" example:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"`
+	// Operation of the task the document belongs to, e.g. for the storage path.
+	Operation string `json:"operation" enums:"SOCIAL_MEDIA,REGISTER_COMPARE" example:"REGISTER_COMPARE"`
 	// BPM's ID of the file, for logging only. Not accepted in the URLs.
 	BPMDocumentID uuid.UUID `json:"bpmDocumentId" format:"uuid" example:"22222222-2222-4222-8222-222222222222"`
 	// Where to download the file from.
@@ -131,6 +133,7 @@ func toClaimedDocument(d document.ClaimedDocument) ClaimedDocument {
 	return ClaimedDocument{
 		ID:            d.ID,
 		RequestGUID:   d.RequestGUID,
+		Operation:     string(d.Operation),
 		BPMDocumentID: d.DocumentID,
 		AttstoreURL:   d.AttstoreURL,
 		Position:      d.Position,

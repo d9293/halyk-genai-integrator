@@ -71,7 +71,7 @@ func TestClaim_TakesDocumentsAndStartsTask(t *testing.T) {
 		t.Fatalf("claimed %d documents, want 2", len(claimed))
 	}
 	for _, d := range claimed {
-		if d.RequestGUID != guid || d.ClaimToken == uuid.Nil || d.AttstoreURL == "" {
+		if d.RequestGUID != guid || d.Operation != domain.OperationRegisterCompare || d.ClaimToken == uuid.Nil || d.AttstoreURL == "" {
 			t.Errorf("unexpected document %+v", d)
 		}
 		if d.ClaimUntil.Before(before.Add(lease-5*time.Second)) || d.ClaimUntil.After(time.Now().Add(lease+5*time.Second)) {
