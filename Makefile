@@ -1,6 +1,6 @@
 CONFIG ?= dev.env
 
-.PHONY: run test test-integration swagger mocks fmt vet check db-init sql-scripts minio-init docker
+.PHONY: run test test-integration swagger mocks fmt vet check db-init sql-scripts minio-init docker sonar
 
 IMAGE ?= halyk-genai-integrator:local
 
@@ -27,10 +27,22 @@ test-integration: ## Run all tests, including integration tests against a throwa
 	@docker exec -i $(TEST_PG) psql -q -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/06_attempts_poll_index.sql
 	@docker exec -i $(TEST_PG) psql -q -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/07_queue_publish.sql
 	@INTEGRATION_POSTGRES_URL=postgres://admin:admin@localhost:55432/postgres?sslmode=disable \
-		go test -race -count=1 ./...; status=$$?; docker stop $(TEST_PG) >/dev/null; exit $$status
+		go test -race -count=1 $(TEST_FLAGS) ./... $(TEST_OUT); status=$$?; docker stop $(TEST_PG) >/dev/null; exit $$status
 
 swagger: ## Regenerate docs/swagger from handler annotations
 	swag init -g main.go -o docs/swagger --parseInternal
+
+SONAR_URL ?= http://sonarqube:9000
+# Scanner token; by default from the local infra's .env. Exported, never echoed.
+SONAR_TOKEN ?= $(shell sed -n 's/^SONAR_TOKEN=//p' $(HOME)/Documents/work/projects/infra/.env 2>/dev/null)
+export SONAR_TOKEN
+SCANNER := sonarsource/sonar-scanner-cli:12.2.0.4256_8.1.0
+
+sonar: ## Tests with the throwaway Postgres and coverage, then analysis on the local SonarQube (infra)
+	@mkdir -p .sonar
+	$(MAKE) test-integration TEST_FLAGS="-coverpkg=./... -coverprofile=.sonar/coverage.out -json" TEST_OUT="> .sonar/tests.json"
+	docker run --rm --network infra -e SONAR_HOST_URL=$(SONAR_URL) -e SONAR_TOKEN \
+		-v "$(CURDIR):/usr/src" $(SCANNER)
 
 mocks: ## Regenerate moq mocks (moq is pinned in the go:generate lines)
 	go generate ./...

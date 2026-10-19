@@ -7,3 +7,6 @@ coverage.*
 .DS_Store
 # Local overrides that may contain secrets.
 *.local.env
+# SonarQube reports and scanner work dir.
+.sonar/
+.scannerwork/
