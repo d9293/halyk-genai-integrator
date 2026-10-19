@@ -25,7 +25,7 @@ const (
 	messageClaimLost        = "Владение документом утрачено: токен неверен или срок истёк"
 )
 
-//go:generate go run github.com/matryer/moq@v0.8.1 -out document_service_mock_test.go . documentService
+//go:generate go run github.com/matryer/moq@v0.5.3 -out document_service_mock_test.go . documentService
 
 type documentService interface {
 	Claim(ctx context.Context, workerID string, limit int) ([]document.ClaimedDocument, error)

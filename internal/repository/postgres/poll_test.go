@@ -466,7 +466,9 @@ func TestObserve_ConcurrentObservationsApplyOnce(t *testing.T) {
 		applied int
 	)
 	for range 10 {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			err := repo.Observe(context.Background(), attempt, p.ClaimToken, notFound, testRules)
 			mu.Lock()
 			defer mu.Unlock()
@@ -476,7 +478,7 @@ func TestObserve_ConcurrentObservationsApplyOnce(t *testing.T) {
 			case !errors.Is(err, poll.ErrClaimLost):
 				t.Errorf("unexpected error: %v", err)
 			}
-		})
+		}()
 	}
 	wg.Wait()
 

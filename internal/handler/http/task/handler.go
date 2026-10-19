@@ -27,7 +27,7 @@ const (
 	messageOperationNotEnabled = "Операция не поддерживается"
 )
 
-//go:generate go run github.com/matryer/moq@v0.8.1 -out task_service_mock_test.go . taskService
+//go:generate go run github.com/matryer/moq@v0.5.3 -out task_service_mock_test.go . taskService
 
 type taskService interface {
 	// Register returns the stored task and whether this call created it.

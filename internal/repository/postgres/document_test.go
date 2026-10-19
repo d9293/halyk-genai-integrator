@@ -151,7 +151,9 @@ func TestClaim_ConcurrentWorkersNeverShareDocuments(t *testing.T) {
 		errs []error
 	)
 	for i := range workers {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			claimed, err := repos[i%2].Claim(context.Background(), "pod", 3, lease)
 			mu.Lock()
 			defer mu.Unlock()
@@ -161,7 +163,7 @@ func TestClaim_ConcurrentWorkersNeverShareDocuments(t *testing.T) {
 			for _, d := range claimed {
 				seen[d.ID]++
 			}
-		})
+		}()
 	}
 	wg.Wait()
 
@@ -398,14 +400,16 @@ func TestComplete_ParallelLastDocuments(t *testing.T) {
 		errs []error
 	)
 	for i, d := range claimed {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			err := repos[i%2].Complete(context.Background(), d.ID, d.ClaimToken, copyResult(i))
 			if err != nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
 			}
-		})
+		}()
 	}
 	wg.Wait()
 

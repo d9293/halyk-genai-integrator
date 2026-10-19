@@ -190,7 +190,9 @@ func TestSubmissionClaim_ConcurrentNeverExceedsLimit(t *testing.T) {
 		errs    []error
 	)
 	for i := range workers {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			got, err := repos[i%2].Claim(context.Background(), "pod", 1, lease, maxInFlight)
 			mu.Lock()
 			defer mu.Unlock()
@@ -204,7 +206,7 @@ func TestSubmissionClaim_ConcurrentNeverExceedsLimit(t *testing.T) {
 				}
 				seen[s.RequestGUID] = true
 			}
-		})
+		}()
 	}
 	wg.Wait()
 

@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-//go:generate go run github.com/matryer/moq@v0.8.1 -out document_repo_mock_test.go . documentRepo
+//go:generate go run github.com/matryer/moq@v0.5.3 -out document_repo_mock_test.go . documentRepo
 
 type documentRepo interface {
 	// Claim gives workerID up to limit documents to copy, each owned for lease.

@@ -25,7 +25,7 @@ const (
 	messageClaimLost      = "Владение результатом утрачено: токен неверен или срок истёк"
 )
 
-//go:generate go run github.com/matryer/moq@v0.8.1 -out result_service_mock_test.go . resultService
+//go:generate go run github.com/matryer/moq@v0.5.3 -out result_service_mock_test.go . resultService
 
 type resultService interface {
 	Claim(ctx context.Context, workerID string, limit int) ([]result.ClaimedResult, error)

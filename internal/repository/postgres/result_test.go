@@ -308,7 +308,9 @@ func TestResultClaim_ConcurrentPublishersNeverShare(t *testing.T) {
 		seen = make(map[uuid.UUID]int)
 	)
 	for i := range 10 {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			claimed, err := repos[i%2].Claim(context.Background(), "pod", 3, resultLease)
 			mu.Lock()
 			defer mu.Unlock()
@@ -318,7 +320,7 @@ func TestResultClaim_ConcurrentPublishersNeverShare(t *testing.T) {
 			for _, c := range claimed {
 				seen[c.RequestGUID]++
 			}
-		})
+		}()
 	}
 	wg.Wait()
 

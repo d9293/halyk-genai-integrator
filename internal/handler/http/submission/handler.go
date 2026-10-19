@@ -25,7 +25,7 @@ const (
 	messageClaimLost       = "Владение попыткой утрачено: токен неверен или срок истёк"
 )
 
-//go:generate go run github.com/matryer/moq@v0.8.1 -out submission_service_mock_test.go . submissionService
+//go:generate go run github.com/matryer/moq@v0.5.3 -out submission_service_mock_test.go . submissionService
 
 type submissionService interface {
 	Claim(ctx context.Context, workerID string, limit int) ([]submission.ClaimedSubmission, error)

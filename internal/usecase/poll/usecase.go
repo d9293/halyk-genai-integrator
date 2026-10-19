@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-//go:generate go run github.com/matryer/moq@v0.8.1 -out poll_repo_mock_test.go . pollRepo
+//go:generate go run github.com/matryer/moq@v0.5.3 -out poll_repo_mock_test.go . pollRepo
 
 type pollRepo interface {
 	// Claim recovers abandoned submissions, then gives workerID up to limit

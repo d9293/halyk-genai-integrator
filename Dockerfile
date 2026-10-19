@@ -3,7 +3,7 @@
 # over the file. Database migrations (schema/postgresql/migration) are not run
 # by this image.
 
-FROM golang:1.27.2 AS build
+FROM golang:1.24.13 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

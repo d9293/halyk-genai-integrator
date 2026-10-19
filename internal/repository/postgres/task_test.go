@@ -211,7 +211,9 @@ func TestRegister_ConcurrentIdenticalRequests(t *testing.T) {
 		errs    []error
 	)
 	for i := range requests {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			_, c, err := instances[i%2].Register(context.Background(), in)
 			mu.Lock()
 			defer mu.Unlock()
@@ -221,7 +223,7 @@ func TestRegister_ConcurrentIdenticalRequests(t *testing.T) {
 			if err != nil {
 				errs = append(errs, err)
 			}
-		})
+		}()
 	}
 	wg.Wait()
 

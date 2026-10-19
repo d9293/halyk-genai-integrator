@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-//go:generate go run github.com/matryer/moq@v0.8.1 -out submission_repo_mock_test.go . submissionRepo
+//go:generate go run github.com/matryer/moq@v0.5.3 -out submission_repo_mock_test.go . submissionRepo
 
 type submissionRepo interface {
 	// Claim starts up to limit new attempts for the oldest ready tasks, as long

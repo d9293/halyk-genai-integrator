@@ -14,7 +14,7 @@ import (
 	"github.com/d9293/halyk-genai-integrator/internal/domain"
 )
 
-//go:generate go run github.com/matryer/moq@v0.8.1 -out task_repo_mock_test.go . taskRepo
+//go:generate go run github.com/matryer/moq@v0.5.3 -out task_repo_mock_test.go . taskRepo
 
 type taskRepo interface {
 	// CreateIfAbsent stores t unless its requestGuid already exists. It returns the

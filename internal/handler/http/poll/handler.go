@@ -24,7 +24,7 @@ const (
 	messageClaimLost       = "Владение проверкой утрачено: токен неверен, срок истёк или ответ уже учтён"
 )
 
-//go:generate go run github.com/matryer/moq@v0.8.1 -out poll_service_mock_test.go . pollService
+//go:generate go run github.com/matryer/moq@v0.5.3 -out poll_service_mock_test.go . pollService
 
 type pollService interface {
 	Claim(ctx context.Context, workerID string, limit int) ([]poll.ClaimedPoll, error)
