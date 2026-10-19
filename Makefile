@@ -1,9 +1,14 @@
 CONFIG ?= dev.env
 
-.PHONY: run test test-integration swagger mocks fmt vet check db-init sql-scripts minio-init
+.PHONY: run test test-integration swagger mocks fmt vet check db-init sql-scripts minio-init docker
+
+IMAGE ?= halyk-genai-integrator:local
 
 run: ## Run the app with $(CONFIG)
 	go run . --config_file $(CONFIG)
+
+docker: ## Build the Docker image $(IMAGE)
+	docker build -t $(IMAGE) .
 
 test: ## Run all tests with the race detector (integration tests are skipped)
 	go test -race ./...

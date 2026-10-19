@@ -1,4 +1,6 @@
 .git
+.idea
 bin
-*.local.env
 test
+# Config is mounted at run time, never baked into the image.
+*.env
