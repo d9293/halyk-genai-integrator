@@ -81,7 +81,7 @@ func TestResultClaim_EveryEndingProducesOneResult(t *testing.T) {
 
 	// 4. AI lost the task too often: FAILED.
 	lostGUID, lostAttempt := atAI(t, pool)
-	if _, err := pool.Exec(ctx, `UPDATE integration.queue SET retry_count = 3 WHERE request_guid = $1`, lostGUID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE integration_queue SET retry_count = 3 WHERE request_guid = $1`, lostGUID); err != nil {
 		t.Fatal(err)
 	}
 	for range 3 {
@@ -132,7 +132,7 @@ func TestResultClaim_MessageContent(t *testing.T) {
 	}
 
 	var completedAt time.Time
-	if err := pool.QueryRow(context.Background(), `SELECT completed_at FROM integration.queue WHERE request_guid = $1`, guid).Scan(&completedAt); err != nil {
+	if err := pool.QueryRow(context.Background(), `SELECT completed_at FROM integration_queue WHERE request_guid = $1`, guid).Scan(&completedAt); err != nil {
 		t.Fatal(err)
 	}
 	if !m.OccurredAt.Equal(completedAt) {
@@ -159,7 +159,7 @@ func TestResultPublished(t *testing.T) {
 	guid := succeededTask(t, pool)
 
 	var updatedBefore time.Time
-	if err := pool.QueryRow(ctx, `SELECT updated_at FROM integration.queue WHERE request_guid = $1`, guid).Scan(&updatedBefore); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT updated_at FROM integration_queue WHERE request_guid = $1`, guid).Scan(&updatedBefore); err != nil {
 		t.Fatal(err)
 	}
 
@@ -173,7 +173,7 @@ func TestResultPublished(t *testing.T) {
 
 	var published bool
 	var updatedAfter time.Time
-	err := pool.QueryRow(ctx, `SELECT published_at IS NOT NULL, updated_at FROM integration.queue WHERE request_guid = $1`, guid).
+	err := pool.QueryRow(ctx, `SELECT published_at IS NOT NULL, updated_at FROM integration_queue WHERE request_guid = $1`, guid).
 		Scan(&published, &updatedAfter)
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +208,7 @@ func TestResultFailed_RetriesWithBackoff(t *testing.T) {
 		t.Helper()
 		err := pool.QueryRow(ctx, `
 			SELECT extract(epoch FROM publish_retry_at - now()), publish_retry_count, publish_error_code
-			FROM integration.queue WHERE request_guid = $1`, guid).Scan(&seconds, &count, &code)
+			FROM integration_queue WHERE request_guid = $1`, guid).Scan(&seconds, &count, &code)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -231,7 +231,7 @@ func TestResultFailed_RetriesWithBackoff(t *testing.T) {
 	}
 
 	// Second failure: the delay doubles.
-	if _, err := pool.Exec(ctx, `UPDATE integration.queue SET publish_retry_at = now() WHERE request_guid = $1`, guid); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE integration_queue SET publish_retry_at = now() WHERE request_guid = $1`, guid); err != nil {
 		t.Fatal(err)
 	}
 	c = claimResult(t, repo, guid)
@@ -243,7 +243,7 @@ func TestResultFailed_RetriesWithBackoff(t *testing.T) {
 	}
 
 	// Many failures: capped, never dropped.
-	if _, err := pool.Exec(ctx, `UPDATE integration.queue SET publish_retry_at = now(), publish_retry_count = 20 WHERE request_guid = $1`, guid); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE integration_queue SET publish_retry_at = now(), publish_retry_count = 20 WHERE request_guid = $1`, guid); err != nil {
 		t.Fatal(err)
 	}
 	c = claimResult(t, repo, guid)

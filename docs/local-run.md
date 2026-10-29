@@ -33,7 +33,7 @@ From the local infra (`~/Documents/work/projects/infra`, `docker compose up -d`)
 
 ```sh
 cd halyk-genai-integrator
-make db-init      # schema `integration` and its tables in the infra Postgres
+make db-init      # integration_* tables in the infra Postgres
 make minio-init   # sample files in bpm-bucket: attstore-mock/registry-{a,b}.pdf and AI report samples
 ```
 
@@ -122,7 +122,7 @@ See every attempt of a task:
 
 ```sh
 docker exec infra-postgres psql -U admin -d postgres -c \
-  "select attempt_no, state, error_code from integration.attempts where request_guid = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' order by attempt_no"
+  "select attempt_no, state, error_code from integration_attempts where request_guid = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' order by attempt_no"
 ```
 
 ## Faster runs
@@ -155,8 +155,7 @@ They create real tasks; run them against local services only.
 ## Start over
 
 ```sh
-docker exec infra-postgres psql -U admin -d postgres -c 'DROP SCHEMA integration CASCADE'
-make db-init                                                   # in halyk-genai-integrator
+make db-reset && make db-init                                  # in halyk-genai-integrator
 curl -XPOST localhost:8081/register-compare/__test/reset       # mock AI forgets everything
 curl -XPOST localhost:8081/social-media/__test/reset
 ```

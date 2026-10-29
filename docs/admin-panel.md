@@ -43,8 +43,8 @@ one final result, one Kafka message".
 
 | Addition | For |
 |---|---|
-| Table `integration.control`, always one row: `max_in_flight`, `submission_enabled`, `pause_reason`, `updated_at`, `updated_by` | `settings`. `submissions/claim` reads it in its transaction instead of `AI_MAX_IN_FLIGHT`; when paused it hands out nothing, while copying, polling and delivery go on. |
-| Attempt state `TERMINATED` in `attempts_state_check` | `release-attempt`: "we stopped tracking it", distinct from `LOST` (AI said not found). |
+| Table `integration_control`, always one row: `max_in_flight`, `submission_enabled`, `pause_reason`, `updated_at`, `updated_by` | `settings`. `submissions/claim` reads it in its transaction instead of `AI_MAX_IN_FLIGHT`; when paused it hands out nothing, while copying, polling and delivery go on. |
+| Attempt state `TERMINATED` in `integration_attempts_state_check` | `release-attempt`: "we stopped tracking it", distinct from `LOST` (AI said not found). |
 | Indexes for the list filters (e.g. `queue (status, created_at)`, `queue (request_id)` exists) | `tasks` list with paging. |
 
 ## Open questions

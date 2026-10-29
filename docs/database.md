@@ -9,14 +9,19 @@ API for work and report results through its internal HTTP endpoints.
 
 ## Overview
 
-All tables live in the schema **`integration`**.
+All tables live in the schema **`public`**. Every object the app owns (tables,
+indexes, constraints) starts with **`integration_`**, so it stays apart from
+other applications' objects there. All of it is created by one migration,
+`schema/postgresql/migration/20261014000001_init.sql`.
 
-| Table | One row per | Purpose | Created in |
-|---|---|---|---|
-| [`queue`](#integrationqueue) | Task (`requestGuid`) | What BPM asked, overall state, final result, delivery of the result to BPM via Kafka | Step 2 (Kafka delivery columns: step 6) |
-| [`documents`](#integrationdocuments) | Input file of a task | Copy Attstore → S3 before the task can be sent to AI | Step 2 |
-| [`audit`](#integrationaudit) | State change | Append-only history of tasks, documents and attempts | Step 2 |
-| [`attempts`](#integrationattempts) | POST to the AI team | One send to AI and everything learned by polling it | Step 4 |
+| Table | One row per | Purpose |
+|---|---|---|
+| [`integration_queue`](#integration_queue) | Task (`requestGuid`) | What BPM asked, overall state, final result, delivery of the result to BPM via Kafka |
+| [`integration_documents`](#integration_documents) | Input file of a task | Copy Attstore → S3 before the task can be sent to AI |
+| [`integration_audit`](#integration_audit) | State change | Append-only history of tasks, documents and attempts |
+| [`integration_attempts`](#integration_attempts) | POST to the AI team | One send to AI and everything learned by polling it |
+
+Below, tables are often called by their short name (`queue`, `attempts`, …).
 
 Deliberately not separate tables: the AI limit is counted from active
 `attempts`; Kafka delivery lives on `queue`; repeated worker calls are
@@ -96,7 +101,7 @@ never overwrite newer state.
 
 ---
 
-## `integration.queue`
+## `integration_queue`
 
 One row per task (`requestGuid`). It holds what BPM asked for (never changed),
 where the task is, its sending to AI, its final outcome, and the delivery of
@@ -173,24 +178,24 @@ registration ───┤                                                     �
 | `FAILED` | **Final.** `error_code` / `error_detail` say why: AI's business error, AI rejected the task, or AI lost it too often. | poll `FAILED`, outcome `REJECTED`, lost-task rule | — | no | **yes** |
 
 "Holds an AI place" follows the task's attempt: the place is counted from
-active attempts (see [`attempts`](#integrationattempts)), not from this status.
+active attempts (see [`attempts`](#integration_attempts)), not from this status.
 
 ### Constraints and indexes
 
 | Name | Rule |
 |---|---|
-| `queue_status_check` | `status` is one of the statuses above. |
-| `queue_retry_count_check` | `retry_count >= 0`. |
-| `queue_completed_at_check` | `completed_at` is set exactly when `status` is `SUCCEEDED` or `FAILED`. |
-| `queue_error_check` | `error_code` and `error_detail` both set or both `NULL`. |
-| `queue_active_attempt_fk` | `(request_guid, active_attempt_id)` → `attempts (request_guid, attempt_id)`: a task can only point to its own attempt. |
-| `queue_published_check` | `published_at` can only be set on a `SUCCEEDED` or `FAILED` task. |
-| `queue_publish_retry_count_check` | `publish_retry_count >= 0`. |
-| `queue_publish_claim_check` | The three `publish_claim_*` columns are all set or all `NULL`. |
-| `queue_publish_error_check` | `publish_error_code` and `publish_error_detail` both set or both `NULL`. |
-| `queue_request_id_idx` | Index on `request_id`. |
-| `queue_ready_idx` | Partial index on `created_at` where `status = 'READY_TO_SUBMIT'`: next task to send. |
-| `queue_unpublished_idx` | Partial index on `completed_at` where the task is final and not yet published: next message to deliver. |
+| `integration_queue_status_check` | `status` is one of the statuses above. |
+| `integration_queue_retry_count_check` | `retry_count >= 0`. |
+| `integration_queue_completed_at_check` | `completed_at` is set exactly when `status` is `SUCCEEDED` or `FAILED`. |
+| `integration_queue_error_check` | `error_code` and `error_detail` both set or both `NULL`. |
+| `integration_queue_active_attempt_fk` | `(request_guid, active_attempt_id)` → `attempts (request_guid, attempt_id)`: a task can only point to its own attempt. |
+| `integration_queue_published_check` | `published_at` can only be set on a `SUCCEEDED` or `FAILED` task. |
+| `integration_queue_publish_retry_count_check` | `publish_retry_count >= 0`. |
+| `integration_queue_publish_claim_check` | The three `publish_claim_*` columns are all set or all `NULL`. |
+| `integration_queue_publish_error_check` | `publish_error_code` and `publish_error_detail` both set or both `NULL`. |
+| `integration_queue_request_id_idx` | Index on `request_id`. |
+| `integration_queue_ready_idx` | Partial index on `created_at` where `status = 'READY_TO_SUBMIT'`: next task to send. |
+| `integration_queue_unpublished_idx` | Partial index on `completed_at` where the task is final and not yet published: next message to deliver. |
 
 ### How workers pick tasks
 
@@ -214,7 +219,7 @@ is left alone because BPM sees it, and the task itself does not change.
 
 | Call | What happens |
 |---|---|
-| `results/claim` | Up to `limit` final tasks with `published_at IS NULL`, due (`publish_retry_at`) and not being published (`SKIP LOCKED`, index `queue_unpublished_idx`), oldest finished first. Each gets a `publish_claim_token` for `RESULT_CLAIM_LEASE`. Returns the topic (`KAFKA_RESULT_TOPIC`), key (`request_id`) and the message built from the row. |
+| `results/claim` | Up to `limit` final tasks with `published_at IS NULL`, due (`publish_retry_at`) and not being published (`SKIP LOCKED`, index `integration_queue_unpublished_idx`), oldest finished first. Each gets a `publish_claim_token` for `RESULT_CLAIM_LEASE`. Returns the topic (`KAFKA_RESULT_TOPIC`), key (`request_id`) and the message built from the row. |
 | `results/{requestGuid}/published` | After the broker ACK: `published_at = now()`, claim released. Never handed out again. Repeating it returns OK. A late call with an expired claim is refused (`409`); the result may then be published again, which BPM handles by deduplicating on `requestGuid`. |
 | `results/{requestGuid}/failure` | Kafka did not accept it: claim released, error saved, `publish_retry_at = now() + RESULT_RETRY_BASE_DELAY · 2^(earlier failures)`, at most `RESULT_RETRY_MAX_DELAY`. Never dropped. |
 
@@ -247,7 +252,7 @@ twice and must ignore repeats by `requestGuid`.
 
 ---
 
-## `integration.documents`
+## `integration_documents`
 
 One row per input file of a task. Only operations with files have rows here
 (e.g. `REGISTER_COMPARE` has exactly two; `SOCIAL_MEDIA` has none). AI cannot
@@ -288,16 +293,16 @@ S3 API, and AI receives the S3 link.
 
 | Constraint | Rule |
 |---|---|
-| `documents_task_position_key` | `UNIQUE (request_guid, position)`. |
-| `documents_task_document_key` | `UNIQUE (request_guid, document_id)`: the same file cannot appear twice in one task. |
-| `documents_position_check` | `position >= 0`. |
-| `documents_status_check` | `status` is one of the statuses above. |
-| `documents_size_check` | `size_bytes >= 0`. |
-| `documents_retry_count_check` | `retry_count >= 0`. |
-| `documents_ready_check` | `status = 'READY'` exactly when `s3_uri`, `size_bytes` and `checksum_sha256` are all set. |
-| `documents_claim_check` | `claim_*` all set or all `NULL`. |
-| `documents_error_check` | `error_code` and `error_detail` both set or both `NULL`. |
-| `documents_claimable_idx` | Partial index on `created_at` where `status` is `PENDING` or `COPYING`: keeps the claim query fast. |
+| `integration_documents_task_position_key` | `UNIQUE (request_guid, position)`. |
+| `integration_documents_task_document_key` | `UNIQUE (request_guid, document_id)`: the same file cannot appear twice in one task. |
+| `integration_documents_position_check` | `position >= 0`. |
+| `integration_documents_status_check` | `status` is one of the statuses above. |
+| `integration_documents_size_check` | `size_bytes >= 0`. |
+| `integration_documents_retry_count_check` | `retry_count >= 0`. |
+| `integration_documents_ready_check` | `status = 'READY'` exactly when `s3_uri`, `size_bytes` and `checksum_sha256` are all set. |
+| `integration_documents_claim_check` | `claim_*` all set or all `NULL`. |
+| `integration_documents_error_check` | `error_code` and `error_detail` both set or both `NULL`. |
+| `integration_documents_claimable_idx` | Partial index on `created_at` where `status` is `PENDING` or `COPYING`: keeps the claim query fast. |
 
 ### Copying documents (worker.Request)
 
@@ -332,7 +337,7 @@ the task to `READY_TO_SUBMIT`.
 
 ---
 
-## `integration.attempts`
+## `integration_attempts`
 
 Created in step 4. One row per **POST to the AI team**. The GET polls for that
 POST update the same row, so 1000 polls are still one row. A task sent 3 times
@@ -377,14 +382,14 @@ The request sent to AI is not stored here: it is rebuilt on every POST from
 
 | Constraint | Rule |
 |---|---|
-| `attempts_state_check` | `state` is one of the states above. |
-| `attempts_attempt_no_check` | `attempt_no >= 1`. |
-| `attempts_counts_check` | `poll_count >= 0` and `not_found_count >= 0`. |
-| `attempts_task_attempt_no_key` | `UNIQUE (request_guid, attempt_no)`. |
-| `attempts_task_attempt_key` | `UNIQUE (request_guid, attempt_id)`; target of `queue_active_attempt_fk`. |
-| `attempts_one_active_idx` | Partial unique index on `request_guid` where `state` is active: at most one POST in flight per task. |
-| `attempts_claim_check` | `claim_*` all set or all `NULL`. |
-| `attempts_error_check` | `error_code` and `error_detail` both set or both `NULL`. |
+| `integration_attempts_state_check` | `state` is one of the states above. |
+| `integration_attempts_attempt_no_check` | `attempt_no >= 1`. |
+| `integration_attempts_counts_check` | `poll_count >= 0` and `not_found_count >= 0`. |
+| `integration_attempts_task_attempt_no_key` | `UNIQUE (request_guid, attempt_no)`. |
+| `integration_attempts_task_attempt_key` | `UNIQUE (request_guid, attempt_id)`; target of `integration_queue_active_attempt_fk`. |
+| `integration_attempts_one_active_idx` | Partial unique index on `request_guid` where `state` is active: at most one POST in flight per task. |
+| `integration_attempts_claim_check` | `claim_*` all set or all `NULL`. |
+| `integration_attempts_error_check` | `error_code` and `error_detail` both set or both `NULL`. |
 
 ### Sending tasks to AI (worker.Request)
 
@@ -392,11 +397,11 @@ The limit of tasks at AI is `AI_MAX_IN_FLIGHT` (10). A task holds an AI place
 while its attempt is **active**: `SUBMITTING`, `UNKNOWN`, `QUEUED` or
 `PROCESSING`, i.e. from the moment we start sending until we know for sure
 AI is done with it or never had it. There is no separate slots table: the
-count comes from `attempts` (index `attempts_one_active_idx`).
+count comes from `attempts` (index `integration_attempts_one_active_idx`).
 
 | Call | What happens |
 |---|---|
-| `submissions/claim` | One short transaction: `pg_advisory_xact_lock` (claims take turns for a few ms, so two claims can never both see the last free place) → count active attempts → if places are free, the oldest due `READY_TO_SUBMIT` tasks (`SKIP LOCKED`, index `queue_ready_idx`) → for each a new attempt (`attempt_no` = previous + 1) in `SUBMITTING` with a claim, task → `SUBMITTING` with `active_attempt_id`, audit. Returns the stored input and the documents' `s3_uri` in `position` order. |
+| `submissions/claim` | One short transaction: `pg_advisory_xact_lock` (claims take turns for a few ms, so two claims can never both see the last free place) → count active attempts → if places are free, the oldest due `READY_TO_SUBMIT` tasks (`SKIP LOCKED`, index `integration_queue_ready_idx`) → for each a new attempt (`attempt_no` = previous + 1) in `SUBMITTING` with a claim, task → `SUBMITTING` with `active_attempt_id`, audit. Returns the stored input and the documents' `s3_uri` in `position` order. |
 | `submissions/{attemptId}/outcome` | `ACCEPTED` → attempt `QUEUED`/`PROCESSING`, task `REMOTE_QUEUED`/`REMOTE_RUNNING`. `UNKNOWN` → attempt `UNKNOWN`, task `SUBMISSION_UNKNOWN`. Both keep the place and set `poll_at = now() + SUBMISSION_POLL_DELAY`. `REJECTED` → attempt `NOT_ACCEPTED`, task `FAILED` with the error: the place is freed. The same report repeated after a lost response returns OK and writes nothing. |
 | `submissions/{attemptId}/renew` | Extends a live `SUBMITTING` claim. |
 
@@ -414,7 +419,7 @@ makes one GET to AI per attempt, and reports the answer.
 
 | Call | What happens |
 |---|---|
-| `polls/claim` | First **recovery**: attempts still `SUBMITTING` after their claim expired (the sender died) → `UNKNOWN`, due now, task `SUBMISSION_UNKNOWN`, audit `SUBMISSION_RECOVERED` by `system`. They keep their AI place and are never re-sent blindly. Then up to `limit` attempts in `UNKNOWN`/`QUEUED`/`PROCESSING` with `poll_at <= now()` and no live claim (`SKIP LOCKED`, index `attempts_pollable_idx`), each claimed for `POLL_CLAIM_LEASE` (one GET). `SUBMITTING` with a live claim is never touched. |
+| `polls/claim` | First **recovery**: attempts still `SUBMITTING` after their claim expired (the sender died) → `UNKNOWN`, due now, task `SUBMISSION_UNKNOWN`, audit `SUBMISSION_RECOVERED` by `system`. They keep their AI place and are never re-sent blindly. Then up to `limit` attempts in `UNKNOWN`/`QUEUED`/`PROCESSING` with `poll_at <= now()` and no live claim (`SKIP LOCKED`, index `integration_attempts_pollable_idx`), each claimed for `POLL_CLAIM_LEASE` (one GET). `SUBMITTING` with a live claim is never touched. |
 | `polls/{attemptId}/observation` | Applies AI's answer, see below, and releases the claim. |
 
 | AI answered | Attempt | Task | AI place | Next check |
@@ -450,7 +455,7 @@ worker.Response runs.
 
 ---
 
-## `integration.audit`
+## `integration_audit`
 
 Append-only history: one row per **state change** of a task, document or
 attempt. Rows are never updated or deleted. Answers "what happened to task X,
@@ -469,7 +474,7 @@ and when?".
 | `detail` | `text` | NULL | | Optional reason, e.g. an error code. No IIN, full name or signed URLs. |
 | `created_at` | `timestamptz` | NOT NULL | `now()` | When it happened. |
 
-Index: `audit_task_idx (request_guid, created_at)` for "history of task X, in order".
+Index: `integration_audit_task_idx (request_guid, created_at)` for "history of task X, in order".
 
 Rules:
 
@@ -523,7 +528,7 @@ Deliberate differences from the original spec (`Final Requirements/Integrator.Ap
 
 | Decision | Reason |
 |---|---|
-| Schema `integration` (spec: `aitask`); tables `queue`, `documents`, `attempts`, `audit` | Naming. |
+| Schema `public` (spec: `aitask`); tables `integration_queue`, `integration_documents`, `integration_attempts`, `integration_audit` | Naming. The `integration_` prefix on every table, index and constraint replaces a separate schema (decision 2026-10-29). |
 | `operation` stays a `text` code, no reference table | An operation is code (validation, AI mapping), not data. A reference table can be added later with the code as its PK, with no data migration. |
 | Removed `operation_version` | One input format per operation for now. Adding versions later needs a migration and an API change. |
 | Kept `request_hash` | Catches BPM reusing a `requestGuid` with different data, which would otherwise deliver one person's result into another process. Costs microseconds. |

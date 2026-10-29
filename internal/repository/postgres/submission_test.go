@@ -54,7 +54,7 @@ func activeAttempts(t *testing.T, pool *pgxpool.Pool) int {
 	t.Helper()
 	var n int
 	err := pool.QueryRow(context.Background(), `
-		SELECT count(*) FROM integration.attempts
+		SELECT count(*) FROM integration_attempts
 		WHERE state IN ('SUBMITTING', 'UNKNOWN', 'QUEUED', 'PROCESSING')`).Scan(&n)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func activeAttempts(t *testing.T, pool *pgxpool.Pool) int {
 func attemptState(t *testing.T, pool *pgxpool.Pool, attemptID uuid.UUID) string {
 	t.Helper()
 	var state string
-	err := pool.QueryRow(context.Background(), `SELECT state FROM integration.attempts WHERE attempt_id = $1`, attemptID).Scan(&state)
+	err := pool.QueryRow(context.Background(), `SELECT state FROM integration_attempts WHERE attempt_id = $1`, attemptID).Scan(&state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestSubmissionClaim_SocialMedia(t *testing.T) {
 
 	var status string
 	var active uuid.UUID
-	err := pool.QueryRow(context.Background(), `SELECT status, active_attempt_id FROM integration.queue WHERE request_guid = $1`, guid).
+	err := pool.QueryRow(context.Background(), `SELECT status, active_attempt_id FROM integration_queue WHERE request_guid = $1`, guid).
 		Scan(&status, &active)
 	if err != nil {
 		t.Fatal(err)
@@ -223,7 +223,7 @@ func TestSubmissionClaim_SkipsTasksNotReady(t *testing.T) {
 	registerCompareTasks(t, pool, 1) // still waiting for documents
 	guid := readySocialMedia(t, pool, 1)[0]
 	_, err := pool.Exec(context.Background(),
-		`UPDATE integration.queue SET retry_at = now() + interval '1 hour' WHERE request_guid = $1`, guid)
+		`UPDATE integration_queue SET retry_at = now() + interval '1 hour' WHERE request_guid = $1`, guid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestSubmissionReport_Outcomes(t *testing.T) {
 			var finished bool
 			err := pool.QueryRow(ctx, `
 				SELECT state, extract(epoch FROM poll_at - now()), claim_token, finished_at IS NOT NULL
-				FROM integration.attempts WHERE attempt_id = $1`, s.AttemptID).Scan(&state, &pollIn, &claimToken, &finished)
+				FROM integration_attempts WHERE attempt_id = $1`, s.AttemptID).Scan(&state, &pollIn, &claimToken, &finished)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -288,7 +288,7 @@ func TestSubmissionReport_Outcomes(t *testing.T) {
 			var completed bool
 			err = pool.QueryRow(ctx, `
 				SELECT status, error_code, completed_at IS NOT NULL
-				FROM integration.queue WHERE request_guid = $1`, guid).Scan(&status, &errorCode, &completed)
+				FROM integration_queue WHERE request_guid = $1`, guid).Scan(&status, &errorCode, &completed)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -304,7 +304,7 @@ func TestSubmissionReport_Outcomes(t *testing.T) {
 				t.Errorf("repeated report: err = %v", err)
 			}
 			var audits int
-			err = pool.QueryRow(ctx, `SELECT count(*) FROM integration.audit WHERE attempt_id = $1`, s.AttemptID).Scan(&audits)
+			err = pool.QueryRow(ctx, `SELECT count(*) FROM integration_audit WHERE attempt_id = $1`, s.AttemptID).Scan(&audits)
 			if err != nil || audits != 2 { // started + this outcome
 				t.Errorf("audit rows for attempt = %d, err %v; want 2", audits, err)
 			}
@@ -390,12 +390,12 @@ func TestSubmissionClaim_NextAttemptNumber(t *testing.T) {
 	first := claimSubmission(t, repo)
 
 	_, err := pool.Exec(ctx, `
-		UPDATE integration.attempts SET state = 'LOST', claim_token = NULL, claim_until = NULL, claim_owner = NULL
+		UPDATE integration_attempts SET state = 'LOST', claim_token = NULL, claim_until = NULL, claim_owner = NULL
 		WHERE attempt_id = $1;`, first.AttemptID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = pool.Exec(ctx, `UPDATE integration.queue SET status = 'READY_TO_SUBMIT' WHERE request_guid = $1`, guid)
+	_, err = pool.Exec(ctx, `UPDATE integration_queue SET status = 'READY_TO_SUBMIT' WHERE request_guid = $1`, guid)
 	if err != nil {
 		t.Fatal(err)
 	}

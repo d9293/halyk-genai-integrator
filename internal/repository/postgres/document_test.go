@@ -44,7 +44,7 @@ func taskStatus(t *testing.T, pool *pgxpool.Pool, requestGUID uuid.UUID) string 
 	t.Helper()
 	var status string
 	err := pool.QueryRow(context.Background(),
-		`SELECT status FROM integration.queue WHERE request_guid = $1`, requestGUID).Scan(&status)
+		`SELECT status FROM integration_queue WHERE request_guid = $1`, requestGUID).Scan(&status)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestClaim_TakesDocumentsAndStartsTask(t *testing.T) {
 
 	var copying int
 	err = pool.QueryRow(ctx, `
-		SELECT count(*) FROM integration.documents
+		SELECT count(*) FROM integration_documents
 		WHERE request_guid = $1 AND status = 'COPYING' AND claim_owner = 'pod-1'`, guid).Scan(&copying)
 	if err != nil || copying != 2 {
 		t.Errorf("COPYING documents owned by pod-1 = %d, err %v", copying, err)
@@ -92,7 +92,7 @@ func TestClaim_TakesDocumentsAndStartsTask(t *testing.T) {
 	}
 	var audits int
 	err = pool.QueryRow(ctx, `
-		SELECT count(*) FROM integration.audit
+		SELECT count(*) FROM integration_audit
 		WHERE request_guid = $1 AND action = 'DOCUMENTS_PREPARING' AND actor = 'pod-1'`, guid).Scan(&audits)
 	if err != nil || audits != 1 {
 		t.Errorf("DOCUMENTS_PREPARING audit rows = %d, err %v", audits, err)
@@ -217,12 +217,12 @@ func TestClaim_SkipsDocumentsNotDueOrOfStoppedTasks(t *testing.T) {
 	ctx := context.Background()
 
 	// Task 0: waiting for a retry later. Task 1: needs attention, so not worked on.
-	_, err := pool.Exec(ctx, `UPDATE integration.documents SET retry_at = now() + interval '1 hour' WHERE request_guid = $1`, guids[0])
+	_, err := pool.Exec(ctx, `UPDATE integration_documents SET retry_at = now() + interval '1 hour' WHERE request_guid = $1`, guids[0])
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = pool.Exec(ctx, `
-		UPDATE integration.queue SET status = 'NEEDS_ATTENTION', error_code = 'X', error_detail = 'test'
+		UPDATE integration_queue SET status = 'NEEDS_ATTENTION', error_code = 'X', error_detail = 'test'
 		WHERE request_guid = $1`, guids[1])
 	if err != nil {
 		t.Fatal(err)
@@ -251,7 +251,7 @@ func auditCount(t *testing.T, pool *pgxpool.Pool, requestGUID uuid.UUID, action 
 	t.Helper()
 	var n int
 	err := pool.QueryRow(context.Background(),
-		`SELECT count(*) FROM integration.audit WHERE request_guid = $1 AND action = $2`, requestGUID, action).Scan(&n)
+		`SELECT count(*) FROM integration_audit WHERE request_guid = $1 AND action = $2`, requestGUID, action).Scan(&n)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestComplete_LastDocumentMakesTaskReady(t *testing.T) {
 
 	var status, s3URI string
 	var claimToken *uuid.UUID
-	err := pool.QueryRow(ctx, `SELECT status, s3_uri, claim_token FROM integration.documents WHERE id = $1`, claimed[1].ID).
+	err := pool.QueryRow(ctx, `SELECT status, s3_uri, claim_token FROM integration_documents WHERE id = $1`, claimed[1].ID).
 		Scan(&status, &s3URI, &claimToken)
 	if err != nil {
 		t.Fatal(err)
@@ -443,7 +443,7 @@ func TestFail_RetryableGoesBackWithBackoff(t *testing.T) {
 	var waitSeconds float64
 	err := pool.QueryRow(ctx, `
 		SELECT status, retry_count, error_code, extract(epoch FROM retry_at - now())
-		FROM integration.documents WHERE id = $1`, doc.ID).Scan(&status, &retryCount, &errorCode, &waitSeconds)
+		FROM integration_documents WHERE id = $1`, doc.ID).Scan(&status, &retryCount, &errorCode, &waitSeconds)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestFail_PermanentOrExhaustedNeedsAttention(t *testing.T) {
 			guid, claimed := claimTask(t, pool, repo)
 			doc := claimed[0]
 
-			_, err := pool.Exec(ctx, `UPDATE integration.documents SET retry_count = $2 WHERE id = $1`, doc.ID, tt.earlierFails)
+			_, err := pool.Exec(ctx, `UPDATE integration_documents SET retry_count = $2 WHERE id = $1`, doc.ID, tt.earlierFails)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -495,7 +495,7 @@ func TestFail_PermanentOrExhaustedNeedsAttention(t *testing.T) {
 			}
 
 			var docStatus string
-			if err := pool.QueryRow(ctx, `SELECT status FROM integration.documents WHERE id = $1`, doc.ID).Scan(&docStatus); err != nil {
+			if err := pool.QueryRow(ctx, `SELECT status FROM integration_documents WHERE id = $1`, doc.ID).Scan(&docStatus); err != nil {
 				t.Fatal(err)
 			}
 			if docStatus != "NEEDS_ATTENTION" {
@@ -503,7 +503,7 @@ func TestFail_PermanentOrExhaustedNeedsAttention(t *testing.T) {
 			}
 
 			var taskState, errorCode string
-			err = pool.QueryRow(ctx, `SELECT status, error_code FROM integration.queue WHERE request_guid = $1`, guid).
+			err = pool.QueryRow(ctx, `SELECT status, error_code FROM integration_queue WHERE request_guid = $1`, guid).
 				Scan(&taskState, &errorCode)
 			if err != nil {
 				t.Fatal(err)

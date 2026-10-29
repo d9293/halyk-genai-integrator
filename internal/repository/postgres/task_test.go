@@ -44,7 +44,7 @@ func newPool(t *testing.T) *pgxpool.Pool {
 	t.Cleanup(pool.Close)
 
 	_, err = pool.Exec(context.Background(),
-		`TRUNCATE integration.audit, integration.documents, integration.attempts, integration.queue`)
+		`TRUNCATE integration_audit, integration_documents, integration_attempts, integration_queue`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,9 +88,9 @@ func socialMedia(requestGUID uuid.UUID) task.RegisterInput {
 func rowCounts(t *testing.T, pool *pgxpool.Pool) (tasks, documents, audit int) {
 	t.Helper()
 	err := pool.QueryRow(context.Background(), `
-		SELECT (SELECT count(*) FROM integration.queue),
-		       (SELECT count(*) FROM integration.documents),
-		       (SELECT count(*) FROM integration.audit)`).Scan(&tasks, &documents, &audit)
+		SELECT (SELECT count(*) FROM integration_queue),
+		       (SELECT count(*) FROM integration_documents),
+		       (SELECT count(*) FROM integration_audit)`).Scan(&tasks, &documents, &audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestRegister_WritesTaskDocumentsAndAudit(t *testing.T) {
 	}
 
 	rows, err := pool.Query(ctx, `
-		SELECT document_id, position, status FROM integration.documents
+		SELECT document_id, position, status FROM integration_documents
 		WHERE request_guid = $1 ORDER BY position`, requestGUID)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestRegister_WritesTaskDocumentsAndAudit(t *testing.T) {
 	}
 
 	var actor, action, newState string
-	err = pool.QueryRow(ctx, `SELECT actor, action, new_state FROM integration.audit WHERE request_guid = $1`, requestGUID).
+	err = pool.QueryRow(ctx, `SELECT actor, action, new_state FROM integration_audit WHERE request_guid = $1`, requestGUID).
 		Scan(&actor, &action, &newState)
 	if err != nil {
 		t.Fatal(err)

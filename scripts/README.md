@@ -1,37 +1,28 @@
 # SQL scripts
 
-Plain SQL to create the schema and tables by hand (or hand to a DBA). Run in order:
+Plain SQL to create the tables by hand (or hand to a DBA). One script does it all:
 
-| # | Script | What it does |
-|---|---|---|
-| 1 | `02_create_tables.sql` | Schema `integration`; tables `queue`, `documents`, `audit`. |
-| 2 | `03_create_attempts.sql` | Table `attempts`; FKs from `queue` and `audit` to it. |
-| 3 | `04_documents_claim_index.sql` | Index for claiming documents to copy. |
-| 4 | `05_queue_ready_index.sql` | Index for picking the next task to send to AI. |
-| 5 | `06_attempts_poll_index.sql` | Index for picking attempts due for a status check. |
-| 6 | `07_queue_publish.sql` | Kafka delivery columns on `queue`; documentation comments on every `queue` column. |
+| Script | What it does |
+|---|---|
+| `01_init.sql` | Tables `integration_queue`, `integration_documents`, `integration_attempts`, `integration_audit` in schema `public`; their constraints, indexes and documentation comments. |
+
+Every object the app owns (tables, indexes, constraints) starts with
+`integration_`, so it stays apart from other applications' objects in `public`.
 
 Local infra (database `postgres`, user `admin`, as in `dev.env`): `make db-init`, or
 
 ```sh
-docker exec -i infra-postgres psql -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/02_create_tables.sql
-docker exec -i infra-postgres psql -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/03_create_attempts.sql
-docker exec -i infra-postgres psql -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/04_documents_claim_index.sql
-docker exec -i infra-postgres psql -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/05_queue_ready_index.sql
-docker exec -i infra-postgres psql -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/06_attempts_poll_index.sql
-docker exec -i infra-postgres psql -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/07_queue_publish.sql
+docker exec -i infra-postgres psql -v ON_ERROR_STOP=1 -U admin -d postgres < scripts/01_init.sql
 ```
 
-To start over (deletes all tasks):
+To start over (deletes all tasks): `make db-reset`, then `make db-init`.
 
-```sh
-docker exec infra-postgres psql -U admin -d postgres -c 'DROP SCHEMA integration CASCADE'
-```
+In test/prod the app should use its own user, not a superuser, with
+`SELECT, INSERT, UPDATE, DELETE` on the four `integration_*` tables only. Since
+PostgreSQL 15 ordinary users cannot create objects in `public` by default, so a
+DBA runs the script (or grants `CREATE` on `public` for that one run).
 
-In test/prod the app should use its own user with access to schema
-`integration` only, not a superuser.
-
-The scripts are **generated** from `schema/postgresql/migration/` by
-`make sql-scripts`. Change the migration, then regenerate; never edit them by
-hand. They are not rerunnable: they fail if the tables exist.
+The script is **generated** from `schema/postgresql/migration/` by
+`make sql-scripts`. Change the migration, then regenerate; never edit it by
+hand. It is not rerunnable: it fails if the tables exist.
 Column meanings: [docs/database.md](../docs/database.md).

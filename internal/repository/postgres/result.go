@@ -20,7 +20,7 @@ import (
 // BPM sees that field, and the task itself does not change.
 const claimResultsSQL = `
 	WITH due AS (
-		SELECT request_guid FROM integration.queue
+		SELECT request_guid FROM integration_queue
 		WHERE status IN ('SUCCEEDED', 'FAILED') AND published_at IS NULL
 		  AND (publish_retry_at IS NULL OR publish_retry_at <= now())
 		  AND (publish_claim_until IS NULL OR publish_claim_until < now())
@@ -28,7 +28,7 @@ const claimResultsSQL = `
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED
 	)
-	UPDATE integration.queue q
+	UPDATE integration_queue q
 	SET publish_claim_token = gen_random_uuid(),
 	    publish_claim_until = now() + make_interval(secs => $2),
 	    publish_claim_owner = $3
@@ -38,7 +38,7 @@ const claimResultsSQL = `
 	          q.error_code, q.error_detail, q.completed_at, q.publish_claim_token, q.publish_claim_until`
 
 // ResultRepo tracks delivery of final task results to BPM through Kafka:
-// the published_at / publish_* columns of integration.queue (see docs/database.md).
+// the published_at / publish_* columns of integration_queue (see docs/database.md).
 type ResultRepo struct {
 	pool         *pgxpool.Pool
 	queryTimeout time.Duration
@@ -90,7 +90,7 @@ func (r *ResultRepo) Published(ctx context.Context, requestGUID, claimToken uuid
 	defer cancel()
 
 	tag, err := r.pool.Exec(ctx, `
-		UPDATE integration.queue
+		UPDATE integration_queue
 		SET published_at = now(),
 		    publish_claim_token = NULL, publish_claim_until = NULL, publish_claim_owner = NULL,
 		    publish_error_code = NULL, publish_error_detail = NULL
@@ -121,7 +121,7 @@ func (r *ResultRepo) Failed(ctx context.Context, requestGUID, claimToken uuid.UU
 	defer cancel()
 
 	tag, err := r.pool.Exec(ctx, `
-		UPDATE integration.queue
+		UPDATE integration_queue
 		SET publish_retry_count = publish_retry_count + 1,
 		    publish_retry_at = now() + make_interval(secs => least($3 * power(2, publish_retry_count), $4)),
 		    publish_claim_token = NULL, publish_claim_until = NULL, publish_claim_owner = NULL,
@@ -146,7 +146,7 @@ func (r *ResultRepo) Failed(ctx context.Context, requestGUID, claimToken uuid.UU
 // or ErrResultNotFound if the task has no result to deliver.
 func (r *ResultRepo) deliveryState(ctx context.Context, requestGUID uuid.UUID) (published bool, err error) {
 	err = r.pool.QueryRow(ctx, `
-		SELECT published_at IS NOT NULL FROM integration.queue
+		SELECT published_at IS NOT NULL FROM integration_queue
 		WHERE request_guid = $1 AND status IN ('SUCCEEDED', 'FAILED')`, requestGUID).Scan(&published)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, result.ErrResultNotFound

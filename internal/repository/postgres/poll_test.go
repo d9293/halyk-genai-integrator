@@ -49,7 +49,7 @@ func atAI(t *testing.T, pool *pgxpool.Pool) (requestGUID, attemptID uuid.UUID) {
 func makeDue(t *testing.T, pool *pgxpool.Pool, attemptID uuid.UUID) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(),
-		`UPDATE integration.attempts SET poll_at = now() - interval '1 second' WHERE attempt_id = $1`, attemptID)
+		`UPDATE integration_attempts SET poll_at = now() - interval '1 second' WHERE attempt_id = $1`, attemptID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func readAttempt(t *testing.T, pool *pgxpool.Pool, attemptID uuid.UUID) attemptR
 	var a attemptRow
 	err := pool.QueryRow(context.Background(), `
 		SELECT state, not_found_count, extract(epoch FROM poll_at - now()), error_code, claim_token IS NOT NULL
-		FROM integration.attempts WHERE attempt_id = $1`, attemptID,
+		FROM integration_attempts WHERE attempt_id = $1`, attemptID,
 	).Scan(&a.state, &a.notFoundCount, &a.pollIn, &a.errorCode, &a.claimed)
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func readTask(t *testing.T, pool *pgxpool.Pool, requestGUID uuid.UUID) taskRow {
 	var r taskRow
 	err := pool.QueryRow(context.Background(), `
 		SELECT status, retry_count, error_code, result_payload, completed_at IS NOT NULL
-		FROM integration.queue WHERE request_guid = $1`, requestGUID,
+		FROM integration_queue WHERE request_guid = $1`, requestGUID,
 	).Scan(&r.status, &r.retryCount, &r.errorCode, &r.result, &r.completed)
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +132,7 @@ func TestPollClaim_OnlyDueAndUnclaimed(t *testing.T) {
 	ctx := context.Background()
 	_, due := atAI(t, pool)
 	_, notDue := atAI(t, pool)
-	_, err := pool.Exec(ctx, `UPDATE integration.attempts SET poll_at = now() + interval '1 hour' WHERE attempt_id = $1`, notDue)
+	_, err := pool.Exec(ctx, `UPDATE integration_attempts SET poll_at = now() + interval '1 hour' WHERE attempt_id = $1`, notDue)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +395,7 @@ func TestObserve_LostNeedsTheMinimumWindow(t *testing.T) {
 func TestObserve_LostTooOftenFails(t *testing.T) {
 	pool := newPool(t)
 	guid, attempt := atAI(t, pool)
-	_, err := pool.Exec(context.Background(), `UPDATE integration.queue SET retry_count = 3 WHERE request_guid = $1`, guid)
+	_, err := pool.Exec(context.Background(), `UPDATE integration_queue SET retry_count = 3 WHERE request_guid = $1`, guid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +524,7 @@ func TestFullJourney(t *testing.T) {
 	}
 
 	var actions []string
-	rows, err := pool.Query(ctx, `SELECT action FROM integration.audit WHERE request_guid = $1 ORDER BY audit_id`, guid)
+	rows, err := pool.Query(ctx, `SELECT action FROM integration_audit WHERE request_guid = $1 ORDER BY audit_id`, guid)
 	if err != nil {
 		t.Fatal(err)
 	}

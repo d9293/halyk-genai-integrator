@@ -19,10 +19,10 @@ const auditActionRegistered = "TASK_REGISTERED"
 const selectTaskColumns = `
 	SELECT request_guid, request_id, caller_id, operation, request_payload, request_hash, status,
 	       result_payload, error_code, error_detail, created_at, updated_at, completed_at
-	FROM integration.queue`
+	FROM integration_queue`
 
-// TaskRepo stores BPM tasks: tables integration.queue, integration.documents
-// and integration.audit (see docs/database.md).
+// TaskRepo stores BPM tasks: tables integration_queue, integration_documents
+// and integration_audit (see docs/database.md).
 type TaskRepo struct {
 	pool         *pgxpool.Pool
 	queryTimeout time.Duration
@@ -49,7 +49,7 @@ func (r *TaskRepo) CreateIfAbsent(ctx context.Context, t domain.Task) (domain.Ta
 	// ON CONFLICT instead of SELECT-then-INSERT: if two requests race, the
 	// loser waits for the winner's commit and then inserts nothing.
 	err = tx.QueryRow(ctx, `
-		INSERT INTO integration.queue (request_guid, request_id, caller_id, operation, request_payload, request_hash, status)
+		INSERT INTO integration_queue (request_guid, request_id, caller_id, operation, request_payload, request_hash, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (request_guid) DO NOTHING
 		RETURNING created_at, updated_at`,
@@ -69,7 +69,7 @@ func (r *TaskRepo) CreateIfAbsent(ctx context.Context, t domain.Task) (domain.Ta
 
 	for position, d := range t.Documents {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO integration.documents (id, request_guid, document_id, position, attstore_url)
+			INSERT INTO integration_documents (id, request_guid, document_id, position, attstore_url)
 			VALUES ($1, $2, $3, $4, $5)`,
 			uuid.New(), t.RequestGUID, d.DocumentID, position, d.AttstoreURL)
 		if err != nil {
@@ -78,7 +78,7 @@ func (r *TaskRepo) CreateIfAbsent(ctx context.Context, t domain.Task) (domain.Ta
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO integration.audit (request_guid, actor, action, new_state)
+		INSERT INTO integration_audit (request_guid, actor, action, new_state)
 		VALUES ($1, $2, $3, $4)`,
 		t.RequestGUID, t.CallerID, auditActionRegistered, string(t.Status))
 	if err != nil {

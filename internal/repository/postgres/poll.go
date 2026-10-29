@@ -43,13 +43,13 @@ const maxRecoveredPerClaim = 100
 // never sent again blindly: AI may already have them. They keep their AI place.
 const recoverSubmissionsSQL = `
 	WITH expired AS (
-		SELECT attempt_id FROM integration.attempts
+		SELECT attempt_id FROM integration_attempts
 		WHERE state = 'SUBMITTING' AND claim_until < now()
 		ORDER BY claim_until
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED
 	), recovered AS (
-		UPDATE integration.attempts a
+		UPDATE integration_attempts a
 		SET state = 'UNKNOWN', poll_at = now(),
 		    claim_token = NULL, claim_until = NULL, claim_owner = NULL,
 		    error_code = $2, error_detail = 'The worker did not report the outcome before its claim expired',
@@ -58,13 +58,13 @@ const recoverSubmissionsSQL = `
 		WHERE a.attempt_id = expired.attempt_id
 		RETURNING a.attempt_id, a.request_guid
 	), tasks AS (
-		UPDATE integration.queue q
+		UPDATE integration_queue q
 		SET status = 'SUBMISSION_UNKNOWN', updated_at = now()
 		FROM recovered
 		WHERE q.request_guid = recovered.request_guid AND q.status = 'SUBMITTING'
 		RETURNING q.request_guid
 	)
-	INSERT INTO integration.audit (request_guid, attempt_id, actor, action, old_state, new_state, detail)
+	INSERT INTO integration_audit (request_guid, attempt_id, actor, action, old_state, new_state, detail)
 	SELECT request_guid, attempt_id, 'system', $3, 'SUBMITTING', 'SUBMISSION_UNKNOWN', $2
 	FROM recovered`
 
@@ -72,7 +72,7 @@ const recoverSubmissionsSQL = `
 // other worker is checking, and gives them to worker $3 for $2 seconds.
 const claimPollsSQL = `
 	WITH due AS (
-		SELECT attempt_id FROM integration.attempts
+		SELECT attempt_id FROM integration_attempts
 		WHERE state IN ('UNKNOWN', 'QUEUED', 'PROCESSING')
 		  AND poll_at <= now()
 		  AND (claim_until IS NULL OR claim_until < now())
@@ -80,17 +80,17 @@ const claimPollsSQL = `
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED
 	)
-	UPDATE integration.attempts a
+	UPDATE integration_attempts a
 	SET claim_token = gen_random_uuid(),
 	    claim_until = now() + make_interval(secs => $2),
 	    claim_owner = $3,
 	    updated_at  = now()
-	FROM due, integration.queue q
+	FROM due, integration_queue q
 	WHERE a.attempt_id = due.attempt_id AND q.request_guid = a.request_guid
 	RETURNING a.attempt_id, a.attempt_no, a.request_guid, q.request_id, q.operation, a.claim_token, a.claim_until`
 
 // PollRepo hands out status checks of tasks at AI and applies the answers:
-// tables integration.attempts and integration.queue, plus audit rows
+// tables integration_attempts and integration_queue, plus audit rows
 // (see docs/database.md).
 type PollRepo struct {
 	pool         *pgxpool.Pool
@@ -189,7 +189,7 @@ func (r *PollRepo) Observe(ctx context.Context, attemptID, claimToken uuid.UUID,
 		SELECT request_guid, state, claim_token, claim_owner, coalesce(claim_until > now(), false),
 		       not_found_count, coalesce(extract(epoch FROM now() - first_not_found_at), 0),
 		       extract(epoch FROM now() - created_at)
-		FROM integration.attempts
+		FROM integration_attempts
 		WHERE attempt_id = $1
 		FOR UPDATE`, attemptID,
 	).Scan(&a.requestGUID, &a.state, &a.claimToken, &a.claimOwner, &a.claimAlive, &a.notFoundCount, &a.notFoundSeconds, &a.ageSeconds)
@@ -209,7 +209,7 @@ func (r *PollRepo) Observe(ctx context.Context, attemptID, claimToken uuid.UUID,
 		return poll.ErrClaimLost
 	}
 
-	err = tx.QueryRow(ctx, `SELECT status, retry_count FROM integration.queue WHERE request_guid = $1 FOR UPDATE`, a.requestGUID).
+	err = tx.QueryRow(ctx, `SELECT status, retry_count FROM integration_queue WHERE request_guid = $1 FOR UPDATE`, a.requestGUID).
 		Scan(&a.taskStatus, &a.taskRetryCount)
 	if err != nil {
 		return wrapPoll("lock task", err)
@@ -268,7 +268,7 @@ func (o *observer) progress(ctx context.Context, outcome poll.Outcome) error {
 	}
 
 	_, err := o.tx.Exec(ctx, `
-		UPDATE integration.attempts
+		UPDATE integration_attempts
 		SET state = $2, poll_at = now() + make_interval(secs => $3), poll_count = poll_count + 1,
 		    not_found_count = 0, first_not_found_at = NULL,
 		    claim_token = NULL, claim_until = NULL, claim_owner = NULL,
@@ -301,7 +301,7 @@ func (o *observer) succeeded(ctx context.Context, result []byte) error {
 	}
 
 	_, err := o.tx.Exec(ctx, `
-		UPDATE integration.queue
+		UPDATE integration_queue
 		SET status = 'SUCCEEDED', result_payload = $2, error_code = NULL, error_detail = NULL,
 		    completed_at = now(), updated_at = now()
 		WHERE request_guid = $1`,
@@ -331,7 +331,7 @@ func (o *observer) notFound(ctx context.Context) (stillAtAI bool, err error) {
 
 	if !lost {
 		_, err := o.tx.Exec(ctx, `
-			UPDATE integration.attempts
+			UPDATE integration_attempts
 			SET not_found_count = $2, first_not_found_at = coalesce(first_not_found_at, now()),
 			    poll_at = now() + make_interval(secs => $3), poll_count = poll_count + 1,
 			    claim_token = NULL, claim_until = NULL, claim_owner = NULL, updated_at = now()
@@ -348,7 +348,7 @@ func (o *observer) notFound(ctx context.Context) (stillAtAI bool, err error) {
 		Message: fmt.Sprintf("AI did not find the task %d times in a row", count),
 	}
 	_, err = o.tx.Exec(ctx, `
-		UPDATE integration.attempts
+		UPDATE integration_attempts
 		SET state = 'LOST', not_found_count = $2, poll_at = NULL, poll_count = poll_count + 1, finished_at = now(),
 		    claim_token = NULL, claim_until = NULL, claim_owner = NULL,
 		    error_code = $3, error_detail = $4, updated_at = now()
@@ -368,7 +368,7 @@ func (o *observer) notFound(ctx context.Context) (stillAtAI bool, err error) {
 
 	// Sent again by the next submission claim, as a new attempt.
 	_, err = o.tx.Exec(ctx, `
-		UPDATE integration.queue
+		UPDATE integration_queue
 		SET status = 'READY_TO_SUBMIT', retry_count = retry_count + 1, retry_at = NULL,
 		    error_code = NULL, error_detail = NULL, updated_at = now()
 		WHERE request_guid = $1`,
@@ -383,7 +383,7 @@ func (o *observer) notFound(ctx context.Context) (stillAtAI bool, err error) {
 // checked again later. The NOT_FOUND streak is neither extended nor reset.
 func (o *observer) technicalError(ctx context.Context, failure *domain.Failure) error {
 	_, err := o.tx.Exec(ctx, `
-		UPDATE integration.attempts
+		UPDATE integration_attempts
 		SET poll_at = now() + make_interval(secs => $2), poll_count = poll_count + 1,
 		    claim_token = NULL, claim_until = NULL, claim_owner = NULL,
 		    error_code = $3, error_detail = $4, updated_at = now()
@@ -418,7 +418,7 @@ func (o *observer) finishAttempt(ctx context.Context, state string, failure *dom
 		code, detail = &failure.Code, &failure.Message
 	}
 	_, err := o.tx.Exec(ctx, `
-		UPDATE integration.attempts
+		UPDATE integration_attempts
 		SET state = $2, poll_at = NULL, poll_count = poll_count + 1, finished_at = now(),
 		    not_found_count = 0, first_not_found_at = NULL,
 		    claim_token = NULL, claim_until = NULL, claim_owner = NULL,
@@ -439,7 +439,7 @@ func (o *observer) setTask(ctx context.Context, status domain.Status, failure *d
 	}
 	terminal := status == domain.StatusSucceeded || status == domain.StatusFailed
 	_, err := o.tx.Exec(ctx, `
-		UPDATE integration.queue
+		UPDATE integration_queue
 		SET status = $2, error_code = $3, error_detail = $4,
 		    completed_at = CASE WHEN $5 THEN now() END, updated_at = now()
 		WHERE request_guid = $1`,
@@ -456,7 +456,7 @@ func (o *observer) setTask(ctx context.Context, status domain.Status, failure *d
 
 func (o *observer) audit(ctx context.Context, action, newState string, detail *string) error {
 	_, err := o.tx.Exec(ctx, `
-		INSERT INTO integration.audit (request_guid, attempt_id, actor, action, old_state, new_state, detail)
+		INSERT INTO integration_audit (request_guid, attempt_id, actor, action, old_state, new_state, detail)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		o.attempt.requestGUID, o.attemptID, o.actor(), action, o.attempt.taskStatus, newState, detail)
 	if err != nil {

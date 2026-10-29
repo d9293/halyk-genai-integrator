@@ -33,8 +33,8 @@ const taskErrorDocumentCopyFailed = "DOCUMENT_COPY_FAILED"
 const claimDocumentsSQL = `
 	WITH candidates AS (
 		SELECT d.id
-		FROM integration.documents d
-		JOIN integration.queue q ON q.request_guid = d.request_guid
+		FROM integration_documents d
+		JOIN integration_queue q ON q.request_guid = d.request_guid
 		WHERE q.status IN ('WAITING_DOCUMENTS', 'PREPARING_DOCUMENTS')
 		  AND (   (d.status = 'PENDING' AND (d.retry_at IS NULL OR d.retry_at <= now()))
 		       OR (d.status = 'COPYING' AND d.claim_until < now()))
@@ -42,13 +42,13 @@ const claimDocumentsSQL = `
 		LIMIT $1
 		FOR UPDATE OF d SKIP LOCKED
 	)
-	UPDATE integration.documents d
+	UPDATE integration_documents d
 	SET status      = 'COPYING',
 	    claim_token = gen_random_uuid(),
 	    claim_until = now() + make_interval(secs => $2),
 	    claim_owner = $3,
 	    updated_at  = now()
-	FROM candidates c, integration.queue q
+	FROM candidates c, integration_queue q
 	WHERE d.id = c.id AND q.request_guid = d.request_guid
 	RETURNING d.id, d.request_guid, q.operation, d.document_id, d.attstore_url, d.position, d.claim_token, d.claim_until`
 
@@ -58,22 +58,22 @@ const claimDocumentsSQL = `
 // two claims touching the same tasks cannot deadlock.
 const startPreparingSQL = `
 	WITH locked AS (
-		SELECT request_guid FROM integration.queue
+		SELECT request_guid FROM integration_queue
 		WHERE request_guid = ANY($1::uuid[]) AND status = 'WAITING_DOCUMENTS'
 		ORDER BY request_guid
 		FOR UPDATE
 	), started AS (
-		UPDATE integration.queue q
+		UPDATE integration_queue q
 		SET status = 'PREPARING_DOCUMENTS', updated_at = now()
 		FROM locked
 		WHERE q.request_guid = locked.request_guid AND q.status = 'WAITING_DOCUMENTS'
 		RETURNING q.request_guid
 	)
-	INSERT INTO integration.audit (request_guid, actor, action, old_state, new_state)
+	INSERT INTO integration_audit (request_guid, actor, action, old_state, new_state)
 	SELECT request_guid, $2, $3, 'WAITING_DOCUMENTS', 'PREPARING_DOCUMENTS'
 	FROM started`
 
-// DocumentRepo tracks copying of task documents: table integration.documents,
+// DocumentRepo tracks copying of task documents: table integration_documents,
 // plus the task status and audit rows it affects (see docs/database.md).
 type DocumentRepo struct {
 	pool         *pgxpool.Pool
@@ -162,7 +162,7 @@ func lockDocument(ctx context.Context, tx pgx.Tx, id uuid.UUID) (lockedDocument,
 	err := tx.QueryRow(ctx, `
 		SELECT request_guid, document_id, status, claim_token, claim_owner,
 		       coalesce(claim_until > now(), false), s3_uri, size_bytes, checksum_sha256, retry_count
-		FROM integration.documents
+		FROM integration_documents
 		WHERE id = $1
 		FOR UPDATE`, id,
 	).Scan(&d.requestGUID, &d.documentID, &d.status, &d.claimToken, &d.claimOwner,
@@ -179,7 +179,7 @@ func lockDocument(ctx context.Context, tx pgx.Tx, id uuid.UUID) (lockedDocument,
 // lockTaskStatus locks the task row and returns its status.
 func lockTaskStatus(ctx context.Context, tx pgx.Tx, requestGUID uuid.UUID) (string, error) {
 	var status string
-	err := tx.QueryRow(ctx, `SELECT status FROM integration.queue WHERE request_guid = $1 FOR UPDATE`, requestGUID).
+	err := tx.QueryRow(ctx, `SELECT status FROM integration_queue WHERE request_guid = $1 FOR UPDATE`, requestGUID).
 		Scan(&status)
 	if err != nil {
 		return "", wrapDocument("lock task", err)
@@ -191,7 +191,7 @@ func insertAudit(ctx context.Context, tx pgx.Tx, requestGUID uuid.UUID, document
 	actor, action, oldState, newState string, detail *string,
 ) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO integration.audit (request_guid, document_id, actor, action, old_state, new_state, detail)
+		INSERT INTO integration_audit (request_guid, document_id, actor, action, old_state, new_state, detail)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		requestGUID, documentID, actor, action, oldState, newState, detail)
 	if err != nil {
@@ -237,7 +237,7 @@ func (r *DocumentRepo) Complete(ctx context.Context, id, claimToken uuid.UUID, r
 	}
 
 	_, err = tx.Exec(ctx, `
-		UPDATE integration.documents
+		UPDATE integration_documents
 		SET status = 'READY', s3_uri = $2, size_bytes = $3, checksum_sha256 = $4,
 		    claim_token = NULL, claim_until = NULL, claim_owner = NULL,
 		    error_code = NULL, error_detail = NULL, updated_at = now()
@@ -253,10 +253,10 @@ func (r *DocumentRepo) Complete(ctx context.Context, id, claimToken uuid.UUID, r
 	if taskStatus == "PREPARING_DOCUMENTS" {
 		// Runs while holding the task lock: sees every document completed before us.
 		tag, err := tx.Exec(ctx, `
-			UPDATE integration.queue
+			UPDATE integration_queue
 			SET status = 'READY_TO_SUBMIT', retry_at = NULL, updated_at = now()
 			WHERE request_guid = $1
-			  AND NOT EXISTS (SELECT 1 FROM integration.documents
+			  AND NOT EXISTS (SELECT 1 FROM integration_documents
 			                  WHERE request_guid = $1 AND status <> 'READY')`,
 			d.requestGUID)
 		if err != nil {
@@ -306,7 +306,7 @@ func (r *DocumentRepo) Fail(ctx context.Context, id, claimToken uuid.UUID, failu
 	failures := d.retryCount + 1
 	if failure.Retryable && !policy.Exhausted(failures) {
 		_, err = tx.Exec(ctx, `
-			UPDATE integration.documents
+			UPDATE integration_documents
 			SET status = 'PENDING', retry_count = $2, retry_at = now() + make_interval(secs => $3),
 			    claim_token = NULL, claim_until = NULL, claim_owner = NULL,
 			    error_code = $4, error_detail = $5, updated_at = now()
@@ -324,7 +324,7 @@ func (r *DocumentRepo) Fail(ctx context.Context, id, claimToken uuid.UUID, failu
 
 	// No more retries: the task cannot be sent to AI without this document.
 	_, err = tx.Exec(ctx, `
-		UPDATE integration.documents
+		UPDATE integration_documents
 		SET status = 'NEEDS_ATTENTION', retry_count = $2, retry_at = NULL,
 		    claim_token = NULL, claim_until = NULL, claim_owner = NULL,
 		    error_code = $3, error_detail = $4, updated_at = now()
@@ -341,7 +341,7 @@ func (r *DocumentRepo) Fail(ctx context.Context, id, claimToken uuid.UUID, failu
 	if taskStatus == "WAITING_DOCUMENTS" || taskStatus == "PREPARING_DOCUMENTS" {
 		detail := fmt.Sprintf("Document %s could not be copied after %d attempt(s): %s", d.documentID, failures, failure.Code)
 		_, err = tx.Exec(ctx, `
-			UPDATE integration.queue
+			UPDATE integration_queue
 			SET status = 'NEEDS_ATTENTION', error_code = $2, error_detail = $3, updated_at = now()
 			WHERE request_guid = $1`,
 			d.requestGUID, taskErrorDocumentCopyFailed, detail)
@@ -364,7 +364,7 @@ func (r *DocumentRepo) Renew(ctx context.Context, id, claimToken uuid.UUID, leas
 
 	var claimUntil time.Time
 	err := r.pool.QueryRow(ctx, `
-		UPDATE integration.documents
+		UPDATE integration_documents
 		SET claim_until = now() + make_interval(secs => $3), updated_at = now()
 		WHERE id = $1 AND claim_token = $2 AND status = 'COPYING' AND claim_until > now()
 		RETURNING claim_until`,
@@ -379,7 +379,7 @@ func (r *DocumentRepo) Renew(ctx context.Context, id, claimToken uuid.UUID, leas
 
 	// Nothing updated: tell a missing document apart from a lost claim.
 	var exists bool
-	err = r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM integration.documents WHERE id = $1)`, id).Scan(&exists)
+	err = r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM integration_documents WHERE id = $1)`, id).Scan(&exists)
 	if err != nil {
 		return time.Time{}, wrapDocument("check document", err)
 	}

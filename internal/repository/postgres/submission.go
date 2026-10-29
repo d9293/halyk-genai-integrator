@@ -31,7 +31,7 @@ const (
 const activeAttemptStates = `('SUBMITTING', 'UNKNOWN', 'QUEUED', 'PROCESSING')`
 
 // SubmissionRepo hands out tasks to send to AI and records the outcome:
-// tables integration.attempts and integration.queue, plus audit rows
+// tables integration_attempts and integration_queue, plus audit rows
 // (see docs/database.md).
 type SubmissionRepo struct {
 	pool         *pgxpool.Pool
@@ -61,7 +61,7 @@ func (r *SubmissionRepo) Claim(ctx context.Context, workerID string, limit int, 
 	}
 
 	var inFlight int
-	err = tx.QueryRow(ctx, `SELECT count(*) FROM integration.attempts WHERE state IN `+activeAttemptStates).Scan(&inFlight)
+	err = tx.QueryRow(ctx, `SELECT count(*) FROM integration_attempts WHERE state IN `+activeAttemptStates).Scan(&inFlight)
 	if err != nil {
 		return nil, wrapSubmission("count active attempts", err)
 	}
@@ -72,7 +72,7 @@ func (r *SubmissionRepo) Claim(ctx context.Context, workerID string, limit int, 
 
 	rows, err := tx.Query(ctx, `
 		SELECT request_guid, request_id, operation, request_payload
-		FROM integration.queue
+		FROM integration_queue
 		WHERE status = 'READY_TO_SUBMIT' AND (retry_at IS NULL OR retry_at <= now())
 		ORDER BY created_at
 		LIMIT $1
@@ -112,9 +112,9 @@ func startAttempt(ctx context.Context, tx pgx.Tx, s *submission.ClaimedSubmissio
 	s.ClaimToken = uuid.New()
 
 	err := tx.QueryRow(ctx, `
-		INSERT INTO integration.attempts (attempt_id, request_guid, attempt_no, state, claim_token, claim_until, claim_owner)
+		INSERT INTO integration_attempts (attempt_id, request_guid, attempt_no, state, claim_token, claim_until, claim_owner)
 		VALUES ($1, $2,
-		        (SELECT coalesce(max(attempt_no), 0) + 1 FROM integration.attempts WHERE request_guid = $2),
+		        (SELECT coalesce(max(attempt_no), 0) + 1 FROM integration_attempts WHERE request_guid = $2),
 		        'SUBMITTING', $3, now() + make_interval(secs => $4), $5)
 		RETURNING attempt_no, claim_until`,
 		s.AttemptID, s.RequestGUID, s.ClaimToken, lease.Seconds(), workerID,
@@ -124,7 +124,7 @@ func startAttempt(ctx context.Context, tx pgx.Tx, s *submission.ClaimedSubmissio
 	}
 
 	_, err = tx.Exec(ctx, `
-		UPDATE integration.queue
+		UPDATE integration_queue
 		SET status = 'SUBMITTING', active_attempt_id = $2, updated_at = now()
 		WHERE request_guid = $1`,
 		s.RequestGUID, s.AttemptID)
@@ -133,7 +133,7 @@ func startAttempt(ctx context.Context, tx pgx.Tx, s *submission.ClaimedSubmissio
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO integration.audit (request_guid, attempt_id, actor, action, old_state, new_state)
+		INSERT INTO integration_audit (request_guid, attempt_id, actor, action, old_state, new_state)
 		VALUES ($1, $2, $3, $4, 'READY_TO_SUBMIT', 'SUBMITTING')`,
 		s.RequestGUID, s.AttemptID, workerID, auditActionSubmissionStarted)
 	if err != nil {
@@ -141,7 +141,7 @@ func startAttempt(ctx context.Context, tx pgx.Tx, s *submission.ClaimedSubmissio
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT position, s3_uri FROM integration.documents
+		SELECT position, s3_uri FROM integration_documents
 		WHERE request_guid = $1
 		ORDER BY position`, s.RequestGUID)
 	if err != nil {
@@ -205,7 +205,7 @@ func (r *SubmissionRepo) Report(ctx context.Context, attemptID, claimToken uuid.
 	)
 	err = tx.QueryRow(ctx, `
 		SELECT request_guid, state, claim_owner, claim_token, coalesce(claim_until > now(), false)
-		FROM integration.attempts
+		FROM integration_attempts
 		WHERE attempt_id = $1
 		FOR UPDATE`, attemptID,
 	).Scan(&requestGUID, &state, &owner, &token, &claimAlive)
@@ -229,7 +229,7 @@ func (r *SubmissionRepo) Report(ctx context.Context, attemptID, claimToken uuid.
 		return submission.ErrClaimLost
 	}
 
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM integration.queue WHERE request_guid = $1 FOR UPDATE`, requestGUID); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM integration_queue WHERE request_guid = $1 FOR UPDATE`, requestGUID); err != nil {
 		return wrapSubmission("lock task", err)
 	}
 
@@ -239,7 +239,7 @@ func (r *SubmissionRepo) Report(ctx context.Context, attemptID, claimToken uuid.
 	}
 
 	_, err = tx.Exec(ctx, `
-		UPDATE integration.attempts
+		UPDATE integration_attempts
 		SET state = $2,
 		    poll_at = CASE WHEN $3 THEN now() + make_interval(secs => $4) END,
 		    finished_at = CASE WHEN $3 THEN NULL ELSE now() END,
@@ -253,12 +253,12 @@ func (r *SubmissionRepo) Report(ctx context.Context, attemptID, claimToken uuid.
 
 	if next.polled {
 		_, err = tx.Exec(ctx, `
-			UPDATE integration.queue SET status = $2, updated_at = now()
+			UPDATE integration_queue SET status = $2, updated_at = now()
 			WHERE request_guid = $1`,
 			requestGUID, string(next.taskStatus))
 	} else {
 		_, err = tx.Exec(ctx, `
-			UPDATE integration.queue
+			UPDATE integration_queue
 			SET status = $2, error_code = $3, error_detail = $4, completed_at = now(), updated_at = now()
 			WHERE request_guid = $1`,
 			requestGUID, string(next.taskStatus), errorCode, errorDetail)
@@ -272,7 +272,7 @@ func (r *SubmissionRepo) Report(ctx context.Context, attemptID, claimToken uuid.
 		actor = *owner
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO integration.audit (request_guid, attempt_id, actor, action, old_state, new_state, detail)
+		INSERT INTO integration_audit (request_guid, attempt_id, actor, action, old_state, new_state, detail)
 		VALUES ($1, $2, $3, $4, 'SUBMITTING', $5, $6)`,
 		requestGUID, attemptID, actor, next.auditAction, string(next.taskStatus), errorCode)
 	if err != nil {
@@ -292,7 +292,7 @@ func (r *SubmissionRepo) Renew(ctx context.Context, attemptID, claimToken uuid.U
 
 	var claimUntil time.Time
 	err := r.pool.QueryRow(ctx, `
-		UPDATE integration.attempts
+		UPDATE integration_attempts
 		SET claim_until = now() + make_interval(secs => $3), updated_at = now()
 		WHERE attempt_id = $1 AND claim_token = $2 AND state = 'SUBMITTING' AND claim_until > now()
 		RETURNING claim_until`,
@@ -307,7 +307,7 @@ func (r *SubmissionRepo) Renew(ctx context.Context, attemptID, claimToken uuid.U
 
 	// Nothing updated: tell a missing attempt apart from a lost claim.
 	var exists bool
-	err = r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM integration.attempts WHERE attempt_id = $1)`, attemptID).Scan(&exists)
+	err = r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM integration_attempts WHERE attempt_id = $1)`, attemptID).Scan(&exists)
 	if err != nil {
 		return time.Time{}, wrapSubmission("check attempt", err)
 	}
